@@ -33,7 +33,9 @@ src/
     customerScript.ts 客役の固定台本（設計書 §8-1）。dry-run 用に各行が
                       advanceTo（遷移先）/ agentSays（条件発話）/ agentSilent（取次ぎ）を持つ
   report/          DoD チェックリストと人間の実施率との比較
-  cli/main.ts      デモ実行
+  cli/main.ts      デモ実行（CLI）
+  web/             Web フロントエンド（描画と再生制御のみ。会話ロジックは持たない）
+web/index.html     Web プロトタイプの外枠（app.js は build:web が生成）
 ```
 
 ## 実行
@@ -41,18 +43,43 @@ src/
 ```bash
 npm install
 
-# 認証（どちらか）
+# 認証（いずれか）
+cp .env.example .env   # .env に ANTHROPIC_API_KEY を書く（.env は gitignore 済み・推奨）
 export ANTHROPIC_API_KEY=sk-ant-...
-# もしくは  ant auth login
+ant auth login
 
 npm run demo      # 台本モード。Enter で1ターンずつ進む（本番のデモはこれ）
 npm run demo -- --auto   # Enter 待ちなしで通しで流す
 npm run manual    # 客役の返答を自分で打つ（アドリブ耐性の確認用）
 npm run dryrun -- --auto # API を呼ばず定型文だけで通す（オフライン練習・回線不安時の保険）
 
-npm test          # 27 件。禁止ワード・遷移ブロック・DoD の回帰テスト
+npm test          # 31 件。禁止ワード・遷移ブロック・DoD・モック再生の回帰テスト
 npm run typecheck
 ```
+
+### Web プロトタイプ（オフラインで動作）
+
+```bash
+npm run web       # ビルドして http://localhost:8080 で配信
+```
+
+会話ログの横に、フェーズ進行・ヒアリング7項目・DoD チェックリスト・人間の実施率との比較・
+ガードレール発火が**同時にリアルタイムで埋まっていく**画面です。
+設計書 §8 の提示順（①フロー ②通話デモ ③DoD 充足結果）を1画面で見せられます。
+
+- 「▶ 次のターン」で1ターンずつ、「⏩ 自動再生」で通しで再生
+- 「音声で読み上げる」を ON にすると AI 側の発話を Web Speech API で読み上げます
+- ビルド済みの `web/app.js` をコミットしてあるため、サーバを立てずに
+  `web/index.html` を直接ブラウザで開いても動きます（デモ当日の保険）
+
+**ブラウザ音声デモへの拡張点**は `src/web/main.ts` の2箇所だけです。
+
+| 拡張 | 差し替える場所 |
+|---|---|
+| 相手の音声入力 | `MockCallEngine.step()` → `SpeechRecognition` で拾った発話を渡す |
+| AI 応答を実 LLM に | `MockCallEngine.step()` → `CallAgent.respond()`（API キーが必要） |
+
+`domain/` のフロー・ガードレール・DoD 判定はどちらの拡張でもそのまま再利用されます。
 
 実行するたび `reports/call-<日時>.md` に通話レポート（DoD チェックリスト・会話ログ・
 遮断した禁止表現・人間の実施率との比較）を書き出します。デモの提示順 ③ にそのまま使えます。
@@ -81,5 +108,15 @@ CALL_AGENT_EFFORT=medium   # low | medium | high | xhigh | max
 
 受付の強固なブロック突破、再架電・既存接点先の日程再設定、複数制度併用者への詳細比較、
 資料送付のみからのナーチャリングは実装していません。
-音声（TTS/STT）・電話回線（Twilio 等）も次フェーズです。本実装はテキスト会話シミュレータで、
-`src/llm/agent.ts` の `CallAgent.respond()` が音声層との接続点になります。
+電話回線（Twilio 等）も次フェーズです。ブラウザ音声は AI 側の読み上げ（TTS）まで実装済みで、
+相手側の音声入力（STT）が未実装です。
+
+## 現在の動作モード
+
+**API キーなしのオフライン・モック動作を v1.0 の確定形とします。**
+発話は設計書の定型文・台本の指定台詞から生成し、Claude API は呼びません。
+ただし**フェーズ遷移の検証・ヒアリング充足判定・DoD 判定・ガードレールは本番と同じコードを通る**ため、
+デモで証明したい G1〜G3 はモックモードでもそのまま成立します。
+
+実 LLM 応答（`npm run demo`）は実装済み・型検査済み・スタブでの単体テスト済みですが、
+**実 API での応答品質は未検証**です。API キーを設定すれば同じ台本でそのまま動きます。

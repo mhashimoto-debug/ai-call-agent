@@ -8,11 +8,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "demo": "tsx src/cli/main.ts --mode scripted",
-    "manual": "tsx src/cli/main.ts --mode manual",
-    "dryrun": "tsx src/cli/main.ts --mode scripted --dry-run",
+    "demo": "node --env-file-if-exists=.env --import tsx src/cli/main.ts --mode scripted",
+    "manual": "node --env-file-if-exists=.env --import tsx src/cli/main.ts --mode manual",
+    "dryrun": "node --env-file-if-exists=.env --import tsx src/cli/main.ts --mode scripted --dry-run",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "build:web": "esbuild src/web/main.ts --bundle --format=iife --target=es2022 --outfile=web/app.js",
+    "web": "npm run build:web && node --import tsx src/web/serve.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

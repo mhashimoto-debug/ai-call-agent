@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BPSR 企業型DC アポ獲得 AI架電エージェント — プレデモ</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dfe3e8;
+    --text: #1c2024;
+    --muted: #666e78;
+    --faint: #8b939d;
+    --ai: #0d6e6e;
+    --ai-bg: #e6f4f4;
+    --cust: #8a5a00;
+    --cust-bg: #fdf3e0;
+    --ok: #1b7f3b;
+    --ng: #b3261e;
+    --warn: #a15c00;
+    --warn-bg: #fdf0dc;
+    --accent: #1f4fd8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel: #1c1f24;
+      --border: #2e333b;
+      --text: #e6e8ea;
+      --muted: #a2aab4;
+      --faint: #79828d;
+      --ai: #5ecfcf;
+      --ai-bg: #123030;
+      --cust: #e0a942;
+      --cust-bg: #33270f;
+      --ok: #58c97e;
+      --ng: #ef8079;
+      --warn: #e0a942;
+      --warn-bg: #33270f;
+      --accent: #7ea0ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .title { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+  .sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  button {
+    font: inherit; font-size: 13.5px; padding: 7px 14px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .4; cursor: default; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: 4px; }
+
+  main {
+    display: grid; grid-template-columns: minmax(0,1fr) 380px;
+    gap: 16px; padding: 16px 20px 40px; max-width: 1440px; margin: 0 auto;
+  }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .panel > h2 {
+    margin: 0; padding: 11px 14px; font-size: 12.5px; font-weight: 700;
+    letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--border);
+  }
+  .panel > .body { padding: 14px; }
+  aside { display: flex; flex-direction: column; gap: 16px; }
+
+  /* 会話ログ */
+  #transcript { min-height: 60vh; padding: 6px 14px 14px; }
+  .phase-sep {
+    display: flex; align-items: center; gap: 10px; margin: 18px 0 10px;
+    font-size: 12px; color: var(--faint);
+  }
+  .phase-sep::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .phase-sep b { color: var(--text); font-size: 12.5px; }
+  .msg { display: flex; gap: 10px; margin: 8px 0; }
+  .who {
+    flex: 0 0 62px; font-size: 11.5px; font-weight: 700; padding-top: 5px; text-align: right;
+  }
+  .msg.ai .who { color: var(--ai); }
+  .msg.cust .who { color: var(--cust); }
+  .bubble { flex: 1; padding: 9px 13px; border-radius: 9px; }
+  .msg.ai .bubble { background: var(--ai-bg); }
+  .msg.cust .bubble { background: var(--cust-bg); }
+  .flag {
+    margin: 4px 0 0 72px; font-size: 12px; color: var(--warn);
+    background: var(--warn-bg); border-radius: 6px; padding: 5px 10px; display: inline-block;
+  }
+  .empty { color: var(--faint); padding: 30px 0; text-align: center; }
+
+  /* フェーズ進行 */
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .steps li {
+    display: flex; gap: 9px; align-items: flex-start; padding: 4px 0;
+    font-size: 13px; color: var(--faint);
+  }
+  .steps .id {
+    flex: 0 0 30px; font-weight: 700; font-variant-numeric: tabular-nums;
+    font-size: 12px; padding-top: 1px;
+  }
+  .steps li.done { color: var(--muted); }
+  .steps li.done .id { color: var(--ok); }
+  .steps li.now { color: var(--text); font-weight: 700; }
+  .steps li.now .id { color: var(--accent); }
+  .steps li.now::after { content: "◀ 現在"; font-size: 11px; color: var(--accent); font-weight: 400; }
+
+  /* チェックリスト */
+  .check { list-style: none; margin: 0; padding: 0; }
+  .check li { display: flex; gap: 9px; padding: 5px 0; font-size: 13px; align-items: flex-start; }
+  .check .mark { flex: 0 0 16px; font-weight: 700; }
+  .check li.ok .mark { color: var(--ok); }
+  .check li.ng .mark { color: var(--ng); }
+  .check li.ng { color: var(--faint); }
+  .check .detail { display: block; font-size: 11.5px; color: var(--faint); }
+  .crit { color: var(--warn); font-size: 11px; }
+
+  .verdict {
+    margin-top: 12px; padding: 10px 12px; border-radius: 8px; text-align: center;
+    font-weight: 700; font-size: 14px;
+  }
+  .verdict.pass { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+  .verdict.fail { background: color-mix(in srgb, var(--ng) 12%, transparent); color: var(--ng); }
+
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.cmp th, table.cmp td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+  table.cmp th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+  table.cmp td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  table.cmp td.ai { color: var(--ok); font-weight: 700; }
+  table.cmp td.hu { color: var(--faint); }
+
+  .note { font-size: 11.5px; color: var(--faint); margin-top: 10px; line-height: 1.6; }
+  .tag {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--muted); margin: 2px 3px 2px 0;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">BPSR 企業型DC アポイント獲得 AI架電エージェント</div>
+  <div class="sub" id="scenario"></div>
+  <div class="controls">
+    <button id="next" class="primary">▶ 次のターン</button>
+    <button id="play">⏩ 自動再生</button>
+    <button id="reset">↺ リセット</button>
+    <label class="toggle"><input type="checkbox" id="voice"> 音声で読み上げる（AI側）</label>
+    <span class="toggle" id="progress"></span>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>通話ログ</h2>
+    <div id="transcript"><div class="empty">「次のターン」で架電を開始します</div></div>
+  </section>
+
+  <aside>
+    <section class="panel">
+      <h2>フェーズ進行</h2>
+      <div class="body"><ul class="steps" id="steps"></ul></div>
+    </section>
+
+    <section class="panel">
+      <h2>ヒアリング7項目（G2）</h2>
+      <div class="body"><ul class="check" id="hearing"></ul></div>
+    </section>
+
+    <section class="panel">
+      <h2>アポ成立判定（DoD）</h2>
+      <div class="body">
+        <ul class="check" id="dod"></ul>
+        <div class="verdict" id="verdict"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>人間のばらつきとの比較</h2>
+      <div class="body">
+        <table class="cmp">
+          <thead><tr><th>項目</th><th class="n">実データ</th><th class="n">AI</th></tr></thead>
+          <tbody id="baseline"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>ガードレール / コンプライアンス</h2>
+      <div class="body">
+        <div id="guardrails"></div>
+        <div class="note" id="compliance"></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<script src="./app.js"></script>
+</body>
+</html>
