@@ -1,0 +1,26 @@
+{
+  "name": "ai-call-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BPSR 企業型DC アポイント獲得 AI架電エージェント（9/10 プレデモ v1.0）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "tsx src/cli/main.ts --mode scripted",
+    "manual": "tsx src/cli/main.ts --mode manual",
+    "dryrun": "tsx src/cli/main.ts --mode scripted --dry-run",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

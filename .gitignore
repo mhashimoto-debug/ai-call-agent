@@ -74,3 +74,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# 通話レポート（手動モードでは実データが入りうる）
+reports/
