@@ -54,3 +54,26 @@ test("設計書の必須発話はすべてフィルタを通過する", () => {
     );
   }
 });
+
+test("F6: 担当者の個人名を名乗ると検知し、団体名のみに自動修正する", () => {
+  const raw = "一般社団法人企業型確定拠出年金相談センターの佐藤と申します。";
+  assert.equal(checkForbidden(raw)[0]?.ruleId, "F6");
+  const { text } = autoFix(raw);
+  assert.equal(text, "一般社団法人企業型確定拠出年金相談センターと申します。");
+  assert.deepEqual(checkForbidden(text), []);
+});
+
+test("F6: 団体名だけの名乗りは違反にしない", () => {
+  assert.deepEqual(
+    checkForbidden("一般社団法人企業型確定拠出年金相談センターと申します。"),
+    [],
+  );
+});
+
+test("発話スクリプトに個人名が残っていない", () => {
+  for (const phase of Object.values(PHASES)) {
+    for (const line of [...phase.mustSay, ...phase.conditional.map((c) => c.say)]) {
+      assert.doesNotMatch(line, /佐藤|◯◯|××/, `${phase.id}: ${line}`);
+    }
+  }
+});

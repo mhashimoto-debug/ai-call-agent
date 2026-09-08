@@ -4,7 +4,6 @@
  */
 export interface Scenario {
   agentOrg: string;
-  agentName: string;
   partnerOrg: string;
   companyName: string;
   employeeCount: number;
@@ -19,7 +18,6 @@ export interface Scenario {
 
 export const DEMO_SCENARIO: Scenario = {
   agentOrg: "一般社団法人企業型確定拠出年金相談センター",
-  agentName: "佐藤",
   partnerOrg: "社会保険労務士法人ビジネスパートナー",
   companyName: "株式会社サンプル工業",
   employeeCount: 12,

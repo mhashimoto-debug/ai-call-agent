@@ -8,7 +8,7 @@
  * 相手には一度も禁止表現が届かない。
  */
 
-export type ForbiddenId = "F1" | "F2" | "F3" | "F4" | "F5";
+export type ForbiddenId = "F1" | "F2" | "F3" | "F4" | "F5" | "F6";
 
 export interface ForbiddenRule {
   id: ForbiddenId;
@@ -69,6 +69,20 @@ export const FORBIDDEN_RULES: ForbiddenRule[] = [
     reason: "提携条件上、固有名を出せない",
     alternative: "（固有名を出さず「提携先の金融機関」と表現する）",
     fix: (t) => t.replace(/(岡三証券|三井住友信託銀行|三井住友信託)/g, "提携先の金融機関"),
+  },
+  {
+    id: "F6",
+    label: "担当者の個人名を名乗る",
+    // AI エージェントは団体名だけを名乗る。実在・架空を問わず人名を作らせない。
+    pattern: /(センター|法人)の[^。、！？\s]{1,8}(と申します|でございます|が承ります)/,
+    scope: "sentence",
+    reason: "AI 架電エージェントは個人名を名乗らない（実在しない担当者名の生成を防ぐ）",
+    alternative: "一般社団法人企業型確定拠出年金相談センターと申します",
+    fix: (t) =>
+      t.replace(
+        /(センター|法人)の[^。、！？\s]{1,8}(と申します|でございます|が承ります)/g,
+        "$1$2",
+      ),
   },
   {
     id: "F5",

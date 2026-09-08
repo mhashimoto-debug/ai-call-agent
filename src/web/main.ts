@@ -18,6 +18,7 @@ import { createCallState, type CallState } from "../domain/state.js";
 import { MockCallEngine } from "../demo/mockEngine.js";
 import { DEMO_SCENARIO } from "../demo/scenario.js";
 import type { PhaseId } from "../domain/types.js";
+import { japaneseVoices, speakUtterance } from "./speech.js";
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -141,8 +142,7 @@ function renderAll(): void {
   $("progress").textContent = state.ended
     ? "通話終了"
     : `台本 ${Math.round(engine.progress * 100)}%`;
-  ($("next") as HTMLButtonElement).disabled = state.ended;
-  ($("play") as HTMLButtonElement).disabled = state.ended;
+  syncButtons();
 }
 
 // ---------- 会話ログ ----------
@@ -160,10 +160,11 @@ function pushPhaseSeparator(phase: PhaseId): void {
   transcript().append(sep);
 }
 
-function pushMessage(kind: "ai" | "cust", who: string, text: string): void {
+function pushMessage(kind: "ai" | "cust", who: string, text: string): HTMLElement {
   const row = el("div", `msg ${kind}`);
   row.append(el("div", "who", who), el("div", "bubble", text));
   transcript().append(row);
+  return row;
 }
 
 function pushFlag(text: string): void {
@@ -171,83 +172,177 @@ function pushFlag(text: string): void {
   transcript().append(d);
 }
 
-function scrollToEnd(): void {
-  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+/**
+ * スクロール追従。
+ * 「今どこを喋っているか」を追いかけるが、ユーザーが自分でスクロールしたら追従をやめる。
+ * 最下部まで自分で戻せば自動で再開する（右下のボタンでも再開できる）。
+ */
+let follow = true;
+
+function nearBottom(): boolean {
+  const doc = document.documentElement;
+  return window.innerHeight + window.scrollY >= doc.scrollHeight - 140;
 }
+
+function setFollow(on: boolean): void {
+  follow = on;
+  ($("follow") as HTMLButtonElement).hidden = on;
+}
+
+/** 現在の発話行までスムーズにスクロールする。追従が切れていれば何もしない。 */
+function scrollToActive(node: HTMLElement): void {
+  if (!follow) return;
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// 上方向のホイール・タッチ操作は「自分で読みたい」の意思表示とみなして追従を切る
+window.addEventListener("wheel", (e) => { if (e.deltaY < 0) setFollow(false); }, { passive: true });
+window.addEventListener("touchmove", () => { if (!nearBottom()) setFollow(false); }, { passive: true });
+window.addEventListener("keydown", (e) => {
+  if (["ArrowUp", "PageUp", "Home"].includes(e.key)) setFollow(false);
+});
+// 自分で最下部まで戻したら追従を再開する
+window.addEventListener("scroll", () => { if (!follow && nearBottom()) setFollow(true); }, { passive: true });
 
 // ---------- 音声（AI 側のみ。相手側 STT は次フェーズ） ----------
 
-function speak(text: string): void {
-  const on = ($("voice") as HTMLInputElement).checked;
-  if (!on || !("speechSynthesis" in window) || !text) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "ja-JP";
-  u.rate = 1.05;
-  window.speechSynthesis.speak(u);
+const voiceOn = (): boolean => ($("voice") as HTMLInputElement).checked;
+
+/** 日本語ボイスを品質推定の高い順に並べてセレクトに流し込み、先頭を既定にする。 */
+let voices: SpeechSynthesisVoice[] = [];
+
+async function initVoices(): Promise<void> {
+  const sel = $("voicesel") as HTMLSelectElement;
+  if (!("speechSynthesis" in window)) {
+    sel.disabled = true;
+    sel.innerHTML = "<option>音声非対応のブラウザです</option>";
+    return;
+  }
+  voices = await japaneseVoices();
+  sel.innerHTML = "";
+  if (voices.length === 0) {
+    sel.disabled = true;
+    sel.innerHTML = "<option>日本語ボイスが見つかりません</option>";
+    return;
+  }
+  voices.forEach((v, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    // 先頭が自動選択された「最も自然に聞こえる」ボイス
+    o.textContent = i === 0 ? `${v.name}（推奨）` : v.name;
+    sel.append(o);
+  });
+  sel.value = "0";
 }
+
+const selectedVoice = (): SpeechSynthesisVoice | null =>
+  voices[Number(($("voicesel") as HTMLSelectElement).value || 0)] ?? null;
+
+/** 読み上げ。発話が終わるまで解決しないので、ログの表示と音声がずれない。 */
+function speak(text: string): Promise<void> {
+  if (!voiceOn()) return Promise.resolve();
+  return speakUtterance(text, { voice: selectedVoice(), rate: 1.0, gapMs: 240 });
+}
+
+const pause = (ms: number): Promise<void> =>
+  new Promise((r) => window.setTimeout(r, ms));
 
 // ---------- 再生制御 ----------
 
 let lastPhase: PhaseId | null = null;
+let busy = false;
+let playing = false;
 
-function step(): void {
-  const s = engine.step();
-  if (!s) {
-    stopPlay();
+function syncButtons(): void {
+  ($("next") as HTMLButtonElement).disabled = state.ended || busy;
+  ($("play") as HTMLButtonElement).disabled = state.ended;
+  $("play").textContent = playing ? "⏸ 停止" : "⏩ 自動再生";
+}
+
+/**
+ * 1ターン進める。
+ * AI が話し終わってから相手のセリフを出すため、音声ONでもログと音声がずれない。
+ */
+async function step(): Promise<void> {
+  if (busy || state.ended) return;
+  busy = true;
+  syncButtons();
+  try {
+    const s = engine.step();
+    if (!s) return;
+    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+
+    if (s.overrideReason) pushFlag(`⚠ 遷移を却下: ${s.overrideReason}`);
+
+    if (s.agent.text) {
+      if (s.agent.phase !== lastPhase) {
+        pushPhaseSeparator(s.agent.phase);
+        lastPhase = s.agent.phase;
+      }
+      const node = pushMessage("ai", "AI", s.agent.text);
+      node.classList.add("speaking");
+      renderAll();
+      scrollToActive(node);
+      await speak(s.agent.text); // 読み上げ終了まで待つ
+      node.classList.remove("speaking");
+    }
+
+    // AI が話し終わってから相手が返す
+    for (const c of s.customer) {
+      await pause(voiceOn() ? 450 : 120);
+      const node = pushMessage("cust", c.role, c.text);
+      if (c.guardrails.length > 0) {
+        pushFlag(
+          `ガードレール検知: ${c.guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
+        );
+      }
+      renderAll();
+      scrollToActive(node);
+    }
+
     renderAll();
-    return;
+  } finally {
+    busy = false;
+    syncButtons();
   }
-  if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+}
 
-  if (s.overrideReason) pushFlag(`⚠ 遷移を却下: ${s.overrideReason}`);
-
-  if (s.agent.text) {
-    if (s.agent.phase !== lastPhase) {
-      pushPhaseSeparator(s.agent.phase);
-      lastPhase = s.agent.phase;
-    }
-    pushMessage("ai", "AI", s.agent.text);
-    speak(s.agent.text);
+/** 自動再生。固定間隔ではなく「1ターンが終わったら次」で回すので音声と同期する。 */
+async function playLoop(): Promise<void> {
+  while (playing && !state.ended) {
+    await step();
+    if (!playing || state.ended) break;
+    await pause(voiceOn() ? 500 : 1500);
   }
-  for (const c of s.customer) {
-    pushMessage("cust", c.role, c.text);
-    if (c.guardrails.length > 0) {
-      pushFlag(
-        `ガードレール検知: ${c.guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
-      );
-    }
-  }
-
-  renderAll();
-  scrollToEnd();
-  if (state.ended) stopPlay();
+  playing = false;
+  syncButtons();
 }
 
 function stopPlay(): void {
-  if (playTimer !== null) {
-    clearInterval(playTimer);
-    playTimer = null;
-  }
-  $("play").textContent = "⏩ 自動再生";
+  playing = false;
+  syncButtons();
 }
 
 function togglePlay(): void {
-  if (playTimer !== null) {
+  if (playing) {
     stopPlay();
+    window.speechSynthesis?.cancel();
     return;
   }
-  $("play").textContent = "⏸ 停止";
-  step();
-  playTimer = window.setInterval(step, 2600);
+  playing = true;
+  syncButtons();
+  void playLoop();
 }
 
 function reset(): void {
   stopPlay();
   window.speechSynthesis?.cancel();
+  busy = false;
   state = createCallState();
   engine = new MockCallEngine(state);
   lastPhase = null;
   clearTranscript();
+  setFollow(true);
   renderAll();
   window.scrollTo({ top: 0 });
 }
@@ -256,9 +351,20 @@ function reset(): void {
 
 renderScenario();
 renderAll();
+
 $("next").addEventListener("click", () => {
   stopPlay();
-  step();
+  window.speechSynthesis?.cancel();
+  void step();
 });
 $("play").addEventListener("click", togglePlay);
 $("reset").addEventListener("click", reset);
+$("follow").addEventListener("click", () => {
+  setFollow(true);
+  transcript().lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
+});
+// 読み上げを途中でOFFにしたら即座に止める（待機中の Promise も解決される）
+$("voice").addEventListener("change", () => {
+  if (!voiceOn()) window.speechSynthesis?.cancel();
+});
+void initVoices();

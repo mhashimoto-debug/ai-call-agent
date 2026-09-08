@@ -28,16 +28,28 @@ const CONTACT_QUESTIONS: Record<string, (s: CallState) => string> = {
   前日連絡の希望時間帯: () => "前日のご連絡は、何時頃が繋がりやすいでしょうか？",
 };
 
+/**
+ * 発話として口に出す形に整える。
+ * 「（受け止め）」のような話者向けのト書きや、
+ * 「（→ 各役員のご年齢も）」のような操作メモは発話に含めない。
+ */
+function speakable(line: string): string {
+  return line
+    .replace(/^（[^）]*）/, "") // 先頭のト書き
+    .replace(/（[^）]*）\s*$/, "") // 末尾の操作メモ
+    .trim();
+}
+
 /** モック発話。台本が台詞を指定していればそれを、なければフェーズの必須発話を使う。 */
 export function mockUtterance(state: CallState, scripted: string | null): string {
-  const strip = (m: string) => m.replace(/^（[^）]*）/, "");
+  const strip = speakable;
   if (scripted) return scripted;
   if (state.phase === "P8") {
     // P8 は「許可取得 → 未取得スロットを1つずつ」の順で進める
     const alreadyInP8 = state.turns.some((t) => t.speaker === "agent" && t.phase === "P8");
     if (!alreadyInP8) return strip(PHASES.P8.mustSay[0] ?? "");
     const nextH = missingHearing(state)[0];
-    if (nextH) return HEARING_SLOT_MAP.get(nextH)?.question ?? "";
+    if (nextH) return speakable(HEARING_SLOT_MAP.get(nextH)?.question ?? "");
     const nextC = missingContact(state)[0];
     if (nextC) return CONTACT_QUESTIONS[nextC]?.(state) ?? `${nextC}を伺えますでしょうか？`;
   }

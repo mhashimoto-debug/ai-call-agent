@@ -229,6 +229,6 @@ export class CallAgent {
   private fallbackUtterance(phase: PhaseId): string {
     const must = PHASES[phase].mustSay.map((s) => s.replace(/^（[^）]*）/, ""));
     if (must.length > 0) return must.join("");
-    return `恐れ入ります、${this.scenario.agentOrg}の${this.scenario.agentName}でございます。`;
+    return `恐れ入ります、${this.scenario.agentOrg}と申します。`;
   }
 }

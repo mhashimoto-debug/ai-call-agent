@@ -7,7 +7,7 @@
       label: "\u53D7\u4ED8\u7A81\u7834",
       goal: "30\u79D2\u4EE5\u5185\u306B\u4EE3\u8868\u3078\u53D6\u6B21\u3044\u3067\u3082\u3089\u3046",
       mustSay: [
-        "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u6050\u308C\u5165\u308A\u307E\u3059\u3002\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u306E\u4F50\u85E4\u3068\u7533\u3057\u307E\u3059\u3002\u9000\u8077\u91D1\u6E96\u5099\u306B\u95A2\u3059\u308B\u4EF6\u3067\u3001\u4EE3\u8868\u306E\u4E2D\u6751\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+        "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u6050\u308C\u5165\u308A\u307E\u3059\u3002\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u3068\u7533\u3057\u307E\u3059\u3002\u9000\u8077\u91D1\u6E96\u5099\u306B\u95A2\u3059\u308B\u4EF6\u3067\u3001\u4EE3\u8868\u306E\u4E2D\u6751\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
       ],
       conditional: [
         {
@@ -49,7 +49,7 @@
       label: "\u4EE3\u8868\u63A5\u7D9A\u30FB\u5DFB\u304D\u8FBC\u307F\u8CEA\u554F",
       goal: "\u76F8\u624B\u306B\u73FE\u72B6\u3092\u558B\u3089\u305B\u308B",
       mustSay: [
-        "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u306E\u4F50\u85E4\u3068\u7533\u3057\u307E\u3059\u3002\u7A81\u7136\u306E\u304A\u96FB\u8A71\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002",
+        "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u3068\u7533\u3057\u307E\u3059\u3002\u7A81\u7136\u306E\u304A\u96FB\u8A71\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002",
         "\u539A\u751F\u52B4\u50CD\u7701\u304C\u7BA1\u8F44\u3059\u308B\u9000\u8077\u91D1\u5236\u5EA6\u3001\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u306B\u3064\u3044\u3066\u306E\u3054\u6848\u5185\u3067\u3059\u3002\u5236\u5EA6\u304C\u539A\u52B4\u7701\u306E\u7BA1\u8F44\u3067\u3001\u79C1\u3069\u3082\u306F\u305D\u306E\u5C0E\u5165\u3092\u652F\u63F4\u3057\u3066\u3044\u308B\u6C11\u9593\u306E\u4E8B\u696D\u8005\u306B\u306A\u308A\u307E\u3059\u3002",
         "\u521D\u3081\u306B1\u70B9\u3060\u3051\u78BA\u8A8D\u306A\u306E\u3067\u3059\u304C\u3001\u5FA1\u793E\u3067\u306F\u5F79\u54E1\u69D8\u306E\u9000\u8077\u91D1\u306E\u3054\u6E96\u5099\u3084\u3001\u793E\u54E1\u69D8\u5411\u3051\u306E\u7A4D\u7ACB\u5236\u5EA6\u306F\u4F55\u304B\u3055\u308C\u3066\u3044\u307E\u3059\u304B\uFF1F"
       ],
@@ -634,14 +634,17 @@
     \u524D\u65E5\u78BA\u8A8D\u306E\u9023\u7D61\u5148: () => "\u524D\u65E5\u306B\u78BA\u8A8D\u306E\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u304A\u96FB\u8A71\u756A\u53F7\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
     \u524D\u65E5\u9023\u7D61\u306E\u5E0C\u671B\u6642\u9593\u5E2F: () => "\u524D\u65E5\u306E\u3054\u9023\u7D61\u306F\u3001\u4F55\u6642\u9803\u304C\u7E4B\u304C\u308A\u3084\u3059\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F"
   };
+  function speakable(line) {
+    return line.replace(/^（[^）]*）/, "").replace(/（[^）]*）\s*$/, "").trim();
+  }
   function mockUtterance(state2, scripted) {
-    const strip = (m) => m.replace(/^（[^）]*）/, "");
+    const strip = speakable;
     if (scripted) return scripted;
     if (state2.phase === "P8") {
       const alreadyInP8 = state2.turns.some((t) => t.speaker === "agent" && t.phase === "P8");
       if (!alreadyInP8) return strip(PHASES.P8.mustSay[0] ?? "");
       const nextH = missingHearing(state2)[0];
-      if (nextH) return HEARING_SLOT_MAP.get(nextH)?.question ?? "";
+      if (nextH) return speakable(HEARING_SLOT_MAP.get(nextH)?.question ?? "");
       const nextC = missingContact(state2)[0];
       if (nextC) return CONTACT_QUESTIONS[nextC]?.(state2) ?? `${nextC}\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F`;
     }
@@ -716,7 +719,6 @@
   // src/demo/scenario.ts
   var DEMO_SCENARIO = {
     agentOrg: "\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC",
-    agentName: "\u4F50\u85E4",
     partnerOrg: "\u793E\u4F1A\u4FDD\u967A\u52B4\u52D9\u58EB\u6CD5\u4EBA\u30D3\u30B8\u30CD\u30B9\u30D1\u30FC\u30C8\u30CA\u30FC",
     companyName: "\u682A\u5F0F\u4F1A\u793E\u30B5\u30F3\u30D7\u30EB\u5DE5\u696D",
     employeeCount: 12,
@@ -729,6 +731,112 @@
     situation: "\u30CF\u30ED\u30FC\u30EF\u30FC\u30AF\u6C42\u4EBA\u30EA\u30B9\u30C8\u304B\u3089\u306E\u65B0\u898F\u67B6\u96FB\uFF08\u904E\u53BB\u306E\u63A5\u70B9\u306A\u3057\uFF09\u3002\u4EE3\u8868\u306F50\u4EE3\u3001\u9000\u8077\u91D1\u306F\u4FDD\u967A\u3067\u5BFE\u5FDC\u6E08\u307F\u3001\u4F01\u696D\u578BDC\u306F\u672A\u8A8D\u77E5\u3002"
   };
 
+  // src/web/speech.ts
+  var VOICE_HINTS = [
+    [/natural/i, 100],
+    // Microsoft Nanami/Keita Online (Natural) — 最も自然
+    [/google/i, 80],
+    // Chrome の Google 日本語
+    [/(enhanced|premium|siri)/i, 60],
+    // macOS の高品質版
+    [/(nanami|keita|kyoko|otoya|o-ren|sayaka|ichiro|mizuki|takumi|ayumi|haruka)/i, 40]
+  ];
+  function scoreVoice(v) {
+    let score = 0;
+    for (const [re, pt] of VOICE_HINTS) if (re.test(v.name)) score += pt;
+    if (!v.localService) score += 20;
+    if (v.default) score += 5;
+    return score;
+  }
+  function loadVoices() {
+    const now = window.speechSynthesis.getVoices();
+    if (now.length > 0) return Promise.resolve(now);
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => resolve(window.speechSynthesis.getVoices()), 1200);
+      window.speechSynthesis.addEventListener(
+        "voiceschanged",
+        () => {
+          window.clearTimeout(timer);
+          resolve(window.speechSynthesis.getVoices());
+        },
+        { once: true }
+      );
+    });
+  }
+  async function japaneseVoices() {
+    const all = await loadVoices();
+    return all.filter((v) => v.lang.toLowerCase().startsWith("ja")).sort((a, b) => scoreVoice(b) - scoreVoice(a));
+  }
+  var WEEKDAY = /（([月火水木金土日])）/g;
+  var EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+  var PHONE = /(\d{2,4})-(\d{2,4})-(\d{3,4})/g;
+  var DOMAIN_KANA = {
+    co: "\u30B7\u30FC\u30AA\u30FC",
+    jp: "\u30B8\u30A7\u30A4\u30D4\u30FC",
+    com: "\u30B3\u30E0",
+    ne: "\u30A8\u30CC\u30A4\u30FC",
+    or: "\u30AA\u30FC\u30A2\u30FC\u30EB",
+    ac: "\u30A8\u30FC\u30B7\u30FC",
+    go: "\u30B8\u30FC\u30AA\u30FC",
+    net: "\u30CD\u30C3\u30C8",
+    org: "\u30AA\u30FC\u30B0"
+  };
+  var DISCOURSE = /(^|[。！？」])(実は|さらに|つまり|ちなみに|ですので|それでは)(?![、。])/g;
+  function speechText(raw) {
+    let t = raw;
+    t = t.replace(WEEKDAY, "$1\u66DC\u65E5").replace(/([月火水木金土日]曜日)(?=\d)/g, "$1\u3001");
+    t = t.replace(
+      EMAIL,
+      (m) => m.replace(/@/g, " \u30A2\u30C3\u30C8\u30DE\u30FC\u30AF ").replace(/\./g, " \u30C9\u30C3\u30C8 ").replace(/-/g, " \u30CF\u30A4\u30D5\u30F3 ").replace(/\b(co|jp|com|ne|or|ac|go|net|org)\b/gi, (w) => DOMAIN_KANA[w.toLowerCase()] ?? w)
+    );
+    t = t.replace(PHONE, "$1\u306E$2\u306E$3");
+    t = t.replace(/[（(][^）)]*[）)]/g, "");
+    t = t.replace(/iDeCo/gi, "\u30A4\u30C7\u30B3").replace(/Zoom/gi, "\u30BA\u30FC\u30E0").replace(/URL/g, "\u30E6\u30FC\u30A2\u30FC\u30EB\u30A8\u30EB").replace(/企業型DC/g, "\u4F01\u696D\u578B\u30C7\u30A3\u30FC\u30B7\u30FC").replace(/\bDC\b/g, "\u30C7\u30A3\u30FC\u30B7\u30FC").replace(/SMS/g, "\u30A8\u30B9\u30A8\u30E0\u30A8\u30B9");
+    t = t.replace(/(\d),(\d{3})/g, "$1$2");
+    t = t.replace(/55000円/g, "\u4E94\u4E07\u4E94\u5343\u5186").replace(/62000円/g, "\u516D\u4E07\u4E8C\u5343\u5186");
+    t = t.replace(DISCOURSE, "$1$2\u3001");
+    return t.replace(/[　\s]+/g, " ").replace(/(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])/g, "").trim();
+  }
+  function splitForSpeech(text) {
+    const parts = text.split(/(?<=[。！？])/).map((s) => s.trim()).filter(Boolean);
+    const out = [];
+    for (const p of parts) {
+      const prev = out.at(-1);
+      if (prev && prev.length < 8) out[out.length - 1] = `${prev}${p}`;
+      else out.push(p);
+    }
+    return out.length > 0 ? out : [text];
+  }
+  function speakOne(text, opt) {
+    return new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "ja-JP";
+      u.rate = opt.rate ?? 1;
+      u.pitch = opt.pitch ?? 1;
+      if (opt.voice) u.voice = opt.voice;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        resolve();
+      };
+      u.onend = finish;
+      u.onerror = finish;
+      const timer = window.setTimeout(finish, Math.max(3500, text.length * 260));
+      window.speechSynthesis.speak(u);
+    });
+  }
+  var wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
+  async function speakUtterance(raw, opt) {
+    if (!("speechSynthesis" in window) || !raw.trim()) return;
+    const sentences = splitForSpeech(speechText(raw));
+    for (let i = 0; i < sentences.length; i++) {
+      await speakOne(sentences[i], opt);
+      if (i < sentences.length - 1) await wait(opt.gapMs ?? 220);
+    }
+  }
+
   // src/web/main.ts
   var $ = (id) => {
     const el2 = document.getElementById(id);
@@ -737,7 +845,6 @@
   };
   var state = createCallState();
   var engine = new MockCallEngine(state);
-  var playTimer = null;
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -834,8 +941,7 @@
     renderDod();
     renderGuardrails();
     $("progress").textContent = state.ended ? "\u901A\u8A71\u7D42\u4E86" : `\u53F0\u672C ${Math.round(engine.progress * 100)}%`;
-    $("next").disabled = state.ended;
-    $("play").disabled = state.ended;
+    syncButtons();
   }
   var transcript = () => $("transcript");
   function clearTranscript() {
@@ -851,75 +957,145 @@
     const row = el("div", `msg ${kind}`);
     row.append(el("div", "who", who), el("div", "bubble", text));
     transcript().append(row);
+    return row;
   }
   function pushFlag(text) {
     const d = el("div", "flag", text);
     transcript().append(d);
   }
-  function scrollToEnd() {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  var follow = true;
+  function nearBottom() {
+    const doc = document.documentElement;
+    return window.innerHeight + window.scrollY >= doc.scrollHeight - 140;
   }
-  function speak(text) {
-    const on = $("voice").checked;
-    if (!on || !("speechSynthesis" in window) || !text) return;
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "ja-JP";
-    u.rate = 1.05;
-    window.speechSynthesis.speak(u);
+  function setFollow(on) {
+    follow = on;
+    $("follow").hidden = on;
   }
-  var lastPhase = null;
-  function step() {
-    const s = engine.step();
-    if (!s) {
-      stopPlay();
-      renderAll();
+  function scrollToActive(node) {
+    if (!follow) return;
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  window.addEventListener("wheel", (e) => {
+    if (e.deltaY < 0) setFollow(false);
+  }, { passive: true });
+  window.addEventListener("touchmove", () => {
+    if (!nearBottom()) setFollow(false);
+  }, { passive: true });
+  window.addEventListener("keydown", (e) => {
+    if (["ArrowUp", "PageUp", "Home"].includes(e.key)) setFollow(false);
+  });
+  window.addEventListener("scroll", () => {
+    if (!follow && nearBottom()) setFollow(true);
+  }, { passive: true });
+  var voiceOn = () => $("voice").checked;
+  var voices = [];
+  async function initVoices() {
+    const sel = $("voicesel");
+    if (!("speechSynthesis" in window)) {
+      sel.disabled = true;
+      sel.innerHTML = "<option>\u97F3\u58F0\u975E\u5BFE\u5FDC\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u3059</option>";
       return;
     }
-    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
-    if (s.overrideReason) pushFlag(`\u26A0 \u9077\u79FB\u3092\u5374\u4E0B: ${s.overrideReason}`);
-    if (s.agent.text) {
-      if (s.agent.phase !== lastPhase) {
-        pushPhaseSeparator(s.agent.phase);
-        lastPhase = s.agent.phase;
-      }
-      pushMessage("ai", "AI", s.agent.text);
-      speak(s.agent.text);
+    voices = await japaneseVoices();
+    sel.innerHTML = "";
+    if (voices.length === 0) {
+      sel.disabled = true;
+      sel.innerHTML = "<option>\u65E5\u672C\u8A9E\u30DC\u30A4\u30B9\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093</option>";
+      return;
     }
-    for (const c of s.customer) {
-      pushMessage("cust", c.role, c.text);
-      if (c.guardrails.length > 0) {
-        pushFlag(
-          `\u30AC\u30FC\u30C9\u30EC\u30FC\u30EB\u691C\u77E5: ${c.guardrails.map((g) => `${g}\uFF08${GUARDRAILS[g].trigger}\uFF09`).join(" / ")}`
-        );
+    voices.forEach((v, i) => {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = i === 0 ? `${v.name}\uFF08\u63A8\u5968\uFF09` : v.name;
+      sel.append(o);
+    });
+    sel.value = "0";
+  }
+  var selectedVoice = () => voices[Number($("voicesel").value || 0)] ?? null;
+  function speak(text) {
+    if (!voiceOn()) return Promise.resolve();
+    return speakUtterance(text, { voice: selectedVoice(), rate: 1, gapMs: 240 });
+  }
+  var pause = (ms) => new Promise((r) => window.setTimeout(r, ms));
+  var lastPhase = null;
+  var busy = false;
+  var playing = false;
+  function syncButtons() {
+    $("next").disabled = state.ended || busy;
+    $("play").disabled = state.ended;
+    $("play").textContent = playing ? "\u23F8 \u505C\u6B62" : "\u23E9 \u81EA\u52D5\u518D\u751F";
+  }
+  async function step() {
+    if (busy || state.ended) return;
+    busy = true;
+    syncButtons();
+    try {
+      const s = engine.step();
+      if (!s) return;
+      if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+      if (s.overrideReason) pushFlag(`\u26A0 \u9077\u79FB\u3092\u5374\u4E0B: ${s.overrideReason}`);
+      if (s.agent.text) {
+        if (s.agent.phase !== lastPhase) {
+          pushPhaseSeparator(s.agent.phase);
+          lastPhase = s.agent.phase;
+        }
+        const node = pushMessage("ai", "AI", s.agent.text);
+        node.classList.add("speaking");
+        renderAll();
+        scrollToActive(node);
+        await speak(s.agent.text);
+        node.classList.remove("speaking");
       }
+      for (const c of s.customer) {
+        await pause(voiceOn() ? 450 : 120);
+        const node = pushMessage("cust", c.role, c.text);
+        if (c.guardrails.length > 0) {
+          pushFlag(
+            `\u30AC\u30FC\u30C9\u30EC\u30FC\u30EB\u691C\u77E5: ${c.guardrails.map((g) => `${g}\uFF08${GUARDRAILS[g].trigger}\uFF09`).join(" / ")}`
+          );
+        }
+        renderAll();
+        scrollToActive(node);
+      }
+      renderAll();
+    } finally {
+      busy = false;
+      syncButtons();
     }
-    renderAll();
-    scrollToEnd();
-    if (state.ended) stopPlay();
+  }
+  async function playLoop() {
+    while (playing && !state.ended) {
+      await step();
+      if (!playing || state.ended) break;
+      await pause(voiceOn() ? 500 : 1500);
+    }
+    playing = false;
+    syncButtons();
   }
   function stopPlay() {
-    if (playTimer !== null) {
-      clearInterval(playTimer);
-      playTimer = null;
-    }
-    $("play").textContent = "\u23E9 \u81EA\u52D5\u518D\u751F";
+    playing = false;
+    syncButtons();
   }
   function togglePlay() {
-    if (playTimer !== null) {
+    if (playing) {
       stopPlay();
+      window.speechSynthesis?.cancel();
       return;
     }
-    $("play").textContent = "\u23F8 \u505C\u6B62";
-    step();
-    playTimer = window.setInterval(step, 2600);
+    playing = true;
+    syncButtons();
+    void playLoop();
   }
   function reset() {
     stopPlay();
     window.speechSynthesis?.cancel();
+    busy = false;
     state = createCallState();
     engine = new MockCallEngine(state);
     lastPhase = null;
     clearTranscript();
+    setFollow(true);
     renderAll();
     window.scrollTo({ top: 0 });
   }
@@ -927,8 +1103,17 @@
   renderAll();
   $("next").addEventListener("click", () => {
     stopPlay();
-    step();
+    window.speechSynthesis?.cancel();
+    void step();
   });
   $("play").addEventListener("click", togglePlay);
   $("reset").addEventListener("click", reset);
+  $("follow").addEventListener("click", () => {
+    setFollow(true);
+    transcript().lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  $("voice").addEventListener("change", () => {
+    if (!voiceOn()) window.speechSynthesis?.cancel();
+  });
+  void initVoices();
 })();
