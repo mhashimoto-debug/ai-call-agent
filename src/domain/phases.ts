@@ -64,8 +64,9 @@ export const PHASES: Record<PhaseId, PhaseDef> = {
       "NGデータでは『厚労省管轄』だけを名乗った結果、公的機関と誤認されて最後まで噛み合わず終話した例がある。",
       "ここでは制度のメリットをまだ説明しない。質問で終える。",
     ],
-    transition: "相手から何らかの回答があれば P2 へ。",
-    allowedNext: ["P1", "P2", "P0X"],
+    transition: "相手から何らかの回答があれば P2 へ。「制度がない」と言われた場合は R1 により P3 へ直行する。",
+    // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路
+    allowedNext: ["P1", "P2", "P3", "P0X"],
     targetElapsedSec: 90,
   },
 

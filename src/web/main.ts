@@ -19,6 +19,9 @@ import { MockCallEngine } from "../demo/mockEngine.js";
 import { DEMO_SCENARIO } from "../demo/scenario.js";
 import type { PhaseId } from "../domain/types.js";
 import { japaneseVoices, speakUtterance } from "./speech.js";
+import { MicInput, micSupported } from "./mic.js";
+import { DialogEngine } from "../demo/dialogEngine.js";
+import { detectGuardrails } from "../domain/guardrails.js";
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -28,6 +31,11 @@ const $ = (id: string): HTMLElement => {
 
 let state: CallState = createCallState();
 let engine = new MockCallEngine(state);
+let dialog = new DialogEngine(state);
+const mic = new MicInput();
+
+type Mode = "script" | "mic";
+const mode = (): Mode => (($("mode") as HTMLSelectElement).value as Mode) ?? "script";
 let playTimer: number | null = null;
 
 // ---------- 描画 ----------
@@ -250,12 +258,162 @@ const pause = (ms: number): Promise<void> =>
 // ---------- 再生制御 ----------
 
 let lastPhase: PhaseId | null = null;
+
+// ---------- マイク入力（自由発話） ----------
+
+function setMicNote(text: string, isError = false): void {
+  const n = $("micnote");
+  n.textContent = text;
+  n.className = `micnote${isError ? " err" : ""}`;
+}
+
+/** 認識中の暫定テキストを1行だけ薄く出す。確定したら消す。 */
+let interimNode: HTMLElement | null = null;
+
+function showInterim(text: string): void {
+  if (!interimNode) {
+    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+    interimNode = pushMessage("cust", "相手", text);
+    interimNode.classList.add("interim");
+  } else {
+    const bubble = interimNode.querySelector(".bubble");
+    if (bubble) bubble.textContent = text;
+  }
+  scrollToActive(interimNode);
+}
+
+function clearInterim(): void {
+  interimNode?.remove();
+  interimNode = null;
+}
+
+/** 音声認識で得たテキストを対話判定エンジンに渡し、AI に応答させる。 */
+async function handleCustomerUtterance(text: string): Promise<void> {
+  if (busy || state.ended) return;
+  busy = true;
+  syncButtons();
+  try {
+    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+
+    const guardrails = detectGuardrails(text);
+    dialog.pushCustomer(text, guardrails);
+    const custNode = pushMessage("cust", "相手", text);
+    if (guardrails.length > 0) {
+      pushFlag(
+        `ガードレール検知: ${guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
+      );
+    }
+    scrollToActive(custNode);
+    await pause(200);
+
+    const r = dialog.respond(text);
+    if (r.overrideReason) pushFlag(`⚠ 遷移を却下: ${r.overrideReason}`);
+    if (r.blocked.length > 0) {
+      pushFlag(
+        `出力前フィルタ: ${r.blocked.map((v) => `「${v.matched}」(${v.ruleId})`).join(", ")} を相手に届く前に遮断`,
+      );
+    }
+    if (r.phase !== lastPhase) {
+      pushPhaseSeparator(r.phase);
+      lastPhase = r.phase;
+    }
+    const node = pushMessage("ai", "AI", r.utterance);
+    // 「なぜこう返したか」を内部メモとして出す
+    const why = el("div", "flag", `判定: ${r.matched}`);
+    transcript().append(why);
+    node.classList.add("speaking");
+    renderAll();
+    scrollToActive(node);
+    await speak(r.utterance);
+    node.classList.remove("speaking");
+    renderAll();
+  } finally {
+    busy = false;
+    syncButtons();
+  }
+}
+
+function toggleMic(): void {
+  const btn = $("mic") as HTMLButtonElement;
+  if (mic.listening) {
+    mic.stop(); // 手動で確定
+    return;
+  }
+  window.speechSynthesis?.cancel();
+  setMicNote("お話しください…");
+  btn.classList.add("on");
+  btn.textContent = "■ 話し終わり";
+  mic.start({
+    onInterim: showInterim,
+    onFinal: (text) => {
+      clearInterim();
+      setMicNote("");
+      void handleCustomerUtterance(text);
+    },
+    onError: (msg) => {
+      clearInterim();
+      setMicNote(msg, true);
+    },
+    onEnd: () => {
+      btn.classList.remove("on");
+      btn.textContent = "🎤 マイクで話す";
+      clearInterim();
+    },
+  });
+}
+
+/** モード切替。マイクモードでは台本の再生ボタンを隠す。 */
+function applyMode(): void {
+  const m = mode();
+  ($("mic") as HTMLButtonElement).hidden = m !== "mic";
+  ($("next") as HTMLButtonElement).hidden = m === "mic";
+  ($("play") as HTMLButtonElement).hidden = m === "mic";
+  if (m === "mic") {
+    mic.abort();
+    setMicNote(
+      micSupported()
+        ? "「🎤 マイクで話す」を押して話しかけてください。AI がフェーズとガードレールで分岐して応答します。"
+        : "このブラウザは音声認識に対応していません（Chrome / Edge / Safari をお使いください）。",
+      !micSupported(),
+    );
+    ($("mic") as HTMLButtonElement).disabled = !micSupported();
+    // 未発話なら AI の第一声から始める
+    if (state.turns.length === 0) void startCall();
+  } else {
+    mic.abort();
+    setMicNote("");
+  }
+  syncButtons();
+}
+
+/** マイクモードの開始。AI の第一声を出す。 */
+async function startCall(): Promise<void> {
+  busy = true;
+  syncButtons();
+  try {
+    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+    const r = dialog.greeting();
+    pushPhaseSeparator(r.phase);
+    lastPhase = r.phase;
+    const node = pushMessage("ai", "AI", r.utterance);
+    node.classList.add("speaking");
+    renderAll();
+    scrollToActive(node);
+    await speak(r.utterance);
+    node.classList.remove("speaking");
+  } finally {
+    busy = false;
+    syncButtons();
+  }
+}
+
 let busy = false;
 let playing = false;
 
 function syncButtons(): void {
   ($("next") as HTMLButtonElement).disabled = state.ended || busy;
   ($("play") as HTMLButtonElement).disabled = state.ended;
+  ($("mic") as HTMLButtonElement).disabled = state.ended || busy || !micSupported();
   $("play").textContent = playing ? "⏸ 停止" : "⏩ 自動再生";
 }
 
@@ -338,13 +496,18 @@ function reset(): void {
   stopPlay();
   window.speechSynthesis?.cancel();
   busy = false;
+  mic.abort();
+  clearInterim();
+  setMicNote("");
   state = createCallState();
   engine = new MockCallEngine(state);
+  dialog = new DialogEngine(state);
   lastPhase = null;
   clearTranscript();
   setFollow(true);
   renderAll();
   window.scrollTo({ top: 0 });
+  if (mode() === "mic") void startCall();
 }
 
 // ---------- 起動 ----------
@@ -367,4 +530,7 @@ $("follow").addEventListener("click", () => {
 $("voice").addEventListener("change", () => {
   if (!voiceOn()) window.speechSynthesis?.cancel();
 });
+$("mic").addEventListener("click", toggleMic);
+$("mode").addEventListener("change", applyMode);
+applyMode();
 void initVoices();

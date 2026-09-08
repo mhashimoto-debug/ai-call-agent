@@ -115,6 +115,19 @@
     font-weight: 600; box-shadow: 0 3px 12px rgba(0,0,0,.22);
   }
   #follow[hidden] { display: none; }
+
+  .mic { font-weight: 600; }
+  .mic[hidden] { display: none; }
+  .mic.on {
+    background: var(--ng); border-color: var(--ng); color: #fff;
+    animation: rec 1.2s ease-in-out infinite;
+  }
+  @keyframes rec { 0%,100% { opacity: 1; } 50% { opacity: .68; } }
+  @media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } }
+
+  .msg.interim .bubble { opacity: .55; font-style: italic; }
+  .micnote { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .micnote.err { color: var(--ng); }
   .who {
     flex: 0 0 62px; font-size: 11.5px; font-weight: 700; padding-top: 5px; text-align: right;
   }
@@ -181,12 +194,18 @@
   <div class="title">BPSR 企業型DC アポイント獲得 AI架電エージェント</div>
   <div class="sub" id="scenario"></div>
   <div class="controls">
+    <select id="mode" class="voicesel" title="進行モード">
+      <option value="script">台本モード（固定台本を再生）</option>
+      <option value="mic">マイクモード（自由に話しかける）</option>
+    </select>
     <button id="next" class="primary">▶ 次のターン</button>
     <button id="play">⏩ 自動再生</button>
+    <button id="mic" class="mic" hidden>🎤 マイクで話す</button>
     <button id="reset">↺ リセット</button>
     <label class="toggle"><input type="checkbox" id="voice"> 音声で読み上げる（AI側）</label>
     <select id="voicesel" class="voicesel" title="日本語ボイス（自然に聞こえる順）"></select>
     <span class="toggle" id="progress"></span>
+    <span class="micnote" id="micnote"></span>
   </div>
 </header>
 

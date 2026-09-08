@@ -59,8 +59,9 @@
         "NG\u30C7\u30FC\u30BF\u3067\u306F\u300E\u539A\u52B4\u7701\u7BA1\u8F44\u300F\u3060\u3051\u3092\u540D\u4E57\u3063\u305F\u7D50\u679C\u3001\u516C\u7684\u6A5F\u95A2\u3068\u8AA4\u8A8D\u3055\u308C\u3066\u6700\u5F8C\u307E\u3067\u565B\u307F\u5408\u308F\u305A\u7D42\u8A71\u3057\u305F\u4F8B\u304C\u3042\u308B\u3002",
         "\u3053\u3053\u3067\u306F\u5236\u5EA6\u306E\u30E1\u30EA\u30C3\u30C8\u3092\u307E\u3060\u8AAC\u660E\u3057\u306A\u3044\u3002\u8CEA\u554F\u3067\u7D42\u3048\u308B\u3002"
       ],
-      transition: "\u76F8\u624B\u304B\u3089\u4F55\u3089\u304B\u306E\u56DE\u7B54\u304C\u3042\u308C\u3070 P2 \u3078\u3002",
-      allowedNext: ["P1", "P2", "P0X"],
+      transition: "\u76F8\u624B\u304B\u3089\u4F55\u3089\u304B\u306E\u56DE\u7B54\u304C\u3042\u308C\u3070 P2 \u3078\u3002\u300C\u5236\u5EA6\u304C\u306A\u3044\u300D\u3068\u8A00\u308F\u308C\u305F\u5834\u5408\u306F R1 \u306B\u3088\u308A P3 \u3078\u76F4\u884C\u3059\u308B\u3002",
+      // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路
+      allowedNext: ["P1", "P2", "P3", "P0X"],
       targetElapsedSec: 90
     },
     P2: {
@@ -837,6 +838,542 @@
     }
   }
 
+  // src/web/mic.ts
+  function ctor() {
+    const w = window;
+    return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+  }
+  var micSupported = () => ctor() !== null;
+  function micErrorMessage(code) {
+    switch (code) {
+      case "not-allowed":
+      case "service-not-allowed":
+        return "\u30DE\u30A4\u30AF\u306E\u4F7F\u7528\u304C\u8A31\u53EF\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u30D6\u30E9\u30A6\u30B6\u306E\u30A2\u30C9\u30EC\u30B9\u30D0\u30FC\u304B\u3089\u30DE\u30A4\u30AF\u3092\u8A31\u53EF\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+      case "no-speech":
+        return "\u97F3\u58F0\u304C\u691C\u51FA\u3055\u308C\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u3082\u3046\u4E00\u5EA6\u304A\u8A66\u3057\u304F\u3060\u3055\u3044\u3002";
+      case "audio-capture":
+        return "\u30DE\u30A4\u30AF\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002\u5165\u529B\u30C7\u30D0\u30A4\u30B9\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+      case "network":
+        return "\u97F3\u58F0\u8A8D\u8B58\u30B5\u30FC\u30D0\u306B\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+      case "aborted":
+        return "\u97F3\u58F0\u5165\u529B\u3092\u4E2D\u6B62\u3057\u307E\u3057\u305F\u3002";
+      default:
+        return `\u97F3\u58F0\u8A8D\u8B58\u3067\u30A8\u30E9\u30FC\u304C\u767A\u751F\u3057\u307E\u3057\u305F\uFF08${code}\uFF09\u3002`;
+    }
+  }
+  var MicInput = class {
+    rec = null;
+    finalText = "";
+    get listening() {
+      return this.rec !== null;
+    }
+    start(handlers) {
+      const C = ctor();
+      if (!C) {
+        handlers.onError("\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u306F\u97F3\u58F0\u8A8D\u8B58\u306B\u5BFE\u5FDC\u3057\u3066\u3044\u307E\u305B\u3093\uFF08Chrome / Edge / Safari \u3092\u304A\u4F7F\u3044\u304F\u3060\u3055\u3044\uFF09\u3002");
+        return;
+      }
+      if (this.rec) return;
+      const rec = new C();
+      rec.lang = "ja-JP";
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      this.finalText = "";
+      rec.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          if (!r) continue;
+          const text = r[0]?.transcript ?? "";
+          if (r.isFinal) this.finalText += text;
+          else interim += text;
+        }
+        if (interim) handlers.onInterim?.(this.finalText + interim);
+      };
+      rec.onerror = (e) => {
+        handlers.onError(micErrorMessage(e.error));
+      };
+      rec.onend = () => {
+        this.rec = null;
+        const text = this.finalText.trim();
+        if (text) handlers.onFinal(text);
+        handlers.onEnd?.();
+      };
+      this.rec = rec;
+      rec.start();
+    }
+    /** 手動で確定させる（話し終わりの自動検出を待たない）。 */
+    stop() {
+      this.rec?.stop();
+    }
+    /** 破棄する（結果は使わない）。 */
+    abort() {
+      const r = this.rec;
+      this.rec = null;
+      r?.abort();
+    }
+  };
+
+  // src/domain/forbidden.ts
+  var FORBIDDEN_RULES = [
+    {
+      id: "F1",
+      label: "\u793E\u4F1A\u4FDD\u967A\u6599\u306E\u65AD\u5B9A\uFF08\u4E0B\u304C\u308A\u307E\u3059\uFF0F\u524A\u6E1B\u306B\u306A\u308A\u307E\u3059\uFF09",
+      pattern: /社会保険料[^。！？\n]{0,24}(削減|下がります|下がる(?!場合|ケース|可能性|ことが)|安くなります|減ります|減額|軽減されます)/,
+      guard: /社会保険料[^。！？\n]{0,24}(場合があり|ことがあり|可能性があり)/,
+      scope: "sentence",
+      reason: "\u7D66\u4E0E\u984D\u30FB\u7B49\u7D1A\u306B\u3088\u308A\u4E0B\u304C\u3089\u306A\u3044\u5834\u5408\u304C\u3042\u308B\u305F\u3081\u65AD\u5B9A\u3067\u304D\u306A\u3044",
+      alternative: "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059",
+      fix: (t) => t.replace(/社会保険料の削減になります/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059").replace(/社会保険料が削減されます/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059").replace(/社会保険料が下がります/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059").replace(/社会保険料が下がり、/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u3001").replace(/社会保険料が安くなります/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059").replace(/社会保険料が減ります/g, "\u793E\u4F1A\u4FDD\u967A\u6599\u304C\u4E0B\u304C\u308B\u5834\u5408\u304C\u3042\u308A\u307E\u3059")
+    },
+    {
+      id: "F2",
+      label: "\u5143\u672C\u4FDD\u8A3C\uFF0F\u5FC5\u305A\u5897\u3048\u308B",
+      pattern: /(元本保証|元本は保証|必ず増え|絶対に増え|減りません|損はしません|リスクはありません)/,
+      scope: "sentence",
+      reason: "\u904B\u7528\u5546\u54C1\u306B\u3088\u3063\u3066\u306F\u5143\u672C\u3092\u4E0B\u56DE\u308B\u53EF\u80FD\u6027\u304C\u3042\u308B",
+      alternative: "\u904B\u7528\u5546\u54C1\u306B\u3088\u3063\u3066\u7D50\u679C\u306F\u5909\u52D5\u3057\u307E\u3059"
+    },
+    {
+      id: "F3",
+      label: "\u5229\u56DE\u308A\u30FB\u53CE\u76CA\u306E\u65AD\u5B9A",
+      pattern: /(絶対もうかり|絶対儲かり|必ずもうかり|必ず儲かり|必ず[0-9０-９]+[%％]|確実に[0-9０-９]+[%％])/,
+      scope: "sentence",
+      reason: "\u65AD\u5B9A\u4E0D\u53EF\uFF08\u4EE3\u66FF\u8868\u73FE\u306A\u3057\u30FB\u4F7F\u7528\u7981\u6B62\uFF09",
+      alternative: null
+    },
+    {
+      id: "F4",
+      label: "\u63D0\u643A\u5148\u306E\u56FA\u6709\u540D",
+      pattern: /(岡三証券|三井住友信託銀行|三井住友信託)/,
+      scope: "utterance",
+      reason: "\u63D0\u643A\u6761\u4EF6\u4E0A\u3001\u56FA\u6709\u540D\u3092\u51FA\u305B\u306A\u3044",
+      alternative: "\uFF08\u56FA\u6709\u540D\u3092\u51FA\u3055\u305A\u300C\u63D0\u643A\u5148\u306E\u91D1\u878D\u6A5F\u95A2\u300D\u3068\u8868\u73FE\u3059\u308B\uFF09",
+      fix: (t) => t.replace(/(岡三証券|三井住友信託銀行|三井住友信託)/g, "\u63D0\u643A\u5148\u306E\u91D1\u878D\u6A5F\u95A2")
+    },
+    {
+      id: "F6",
+      label: "\u62C5\u5F53\u8005\u306E\u500B\u4EBA\u540D\u3092\u540D\u4E57\u308B",
+      // AI エージェントは団体名だけを名乗る。実在・架空を問わず人名を作らせない。
+      pattern: /(センター|法人)の[^。、！？\s]{1,8}(と申します|でございます|が承ります)/,
+      scope: "sentence",
+      reason: "AI \u67B6\u96FB\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u306F\u500B\u4EBA\u540D\u3092\u540D\u4E57\u3089\u306A\u3044\uFF08\u5B9F\u5728\u3057\u306A\u3044\u62C5\u5F53\u8005\u540D\u306E\u751F\u6210\u3092\u9632\u3050\uFF09",
+      alternative: "\u4E00\u822C\u793E\u56E3\u6CD5\u4EBA\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u3068\u7533\u3057\u307E\u3059",
+      fix: (t) => t.replace(
+        /(センター|法人)の[^。、！？\s]{1,8}(と申します|でございます|が承ります)/g,
+        "$1$2"
+      )
+    },
+    {
+      id: "F5",
+      label: "\u300C\u539A\u52B4\u7701\u7BA1\u8F44\u300D\u5358\u72EC\uFF08\u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\uFF09",
+      pattern: /(厚生労働省|厚労省)/,
+      guard: /(民間|一般社団法人|導入を支援|導入支援)/,
+      scope: "utterance",
+      reason: "\u516C\u7684\u6A5F\u95A2\u3068\u8AA4\u8A8D\u3055\u308C\u308B\u3068\u6700\u5F8C\u307E\u3067\u565B\u307F\u5408\u308F\u306A\u3044\uFF08NG\u30C7\u30FC\u30BF\u306B\u5B9F\u4F8B\u3042\u308A\uFF09",
+      alternative: "\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3059"
+    }
+  ];
+  function splitSentences(text) {
+    return text.split(/(?<=[。！？\n])/).map((s) => s.trim()).filter((s) => s.length > 0);
+  }
+  function checkForbidden(utterance) {
+    const violations = [];
+    for (const rule of FORBIDDEN_RULES) {
+      const targets = rule.scope === "utterance" ? [utterance] : splitSentences(utterance);
+      for (const target of targets) {
+        const m = rule.pattern.exec(target);
+        if (!m) continue;
+        if (rule.guard?.test(target)) continue;
+        violations.push({
+          ruleId: rule.id,
+          label: rule.label,
+          matched: m[0],
+          reason: rule.reason,
+          alternative: rule.alternative,
+          fixable: Boolean(rule.fix)
+        });
+        break;
+      }
+    }
+    return violations;
+  }
+  function autoFix(utterance) {
+    let text = utterance;
+    const applied = [];
+    for (const rule of FORBIDDEN_RULES) {
+      if (!rule.fix) continue;
+      const before = text;
+      text = rule.fix(text);
+      if (text !== before) applied.push(rule.id);
+    }
+    return { text, applied };
+  }
+
+  // src/demo/dialogEngine.ts
+  var YES = /(はい|ええ|うん|そうです|大丈夫|かまいません|構いません|お願い|了解|わかりました|分かりました|いいです|結構ですよ|それで)/;
+  var NO = /(いいえ|いや|結構です|いりません|要りません|やめ|やらない|興味ない|不要)/;
+  var ASK_PURPOSE = /(ご用件|用件|どういった|どちら様|なんの|何の|どんな)/;
+  var TRANSFER = /(お待ち|代わり|かわり|繋ぎ|つなぎ|少々|担当に)/;
+  var REFUSE_SALES = /(営業|セールス|お断り|断るよう|取り次げ|取次ぎでき)/;
+  var EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+  var PHONE_RE = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
+  var COUNT_RE = /(\d+)\s*(名|人)/;
+  var AGE_RE = /(\d{1,3})\s*(歳|才)|(?:今年で|年齢は)\s*(\d{1,3})/;
+  var MONTH_RE = /(\d{1,2})\s*月/;
+  var DialogEngine = class {
+    constructor(state2) {
+      this.state = state2;
+    }
+    state;
+    pending = null;
+    /** 架電開始の第一声。 */
+    greeting() {
+      return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", [], "\u67B6\u96FB\u958B\u59CB");
+    }
+    /** 相手の発話を受けて応答を1つ返す。state は破壊的に更新される。 */
+    respond(customerText) {
+      const text = customerText.trim();
+      const fired = detectGuardrails(text);
+      for (const g2 of fired) {
+        if (!this.state.firedGuardrails.includes(g2)) this.state.firedGuardrails.push(g2);
+      }
+      const g = this.byGuardrail(text, fired);
+      if (g) return g;
+      switch (this.state.phase) {
+        case "P0":
+          return this.p0(text, fired);
+        case "P1":
+          return this.p1(text, fired);
+        case "P2":
+          return this.p2(text, fired);
+        case "P3":
+          return this.p3(text, fired);
+        case "P4":
+          return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u5F8C \u2192 \u4F4E\u30CF\u30FC\u30C9\u30EB\u6253\u8A3A");
+        case "P5":
+          return this.p5(text, fired);
+        case "P6":
+          return this.p6(text, fired);
+        case "P7":
+          return this.p7(text, fired);
+        case "P8":
+          return this.p8(text, fired);
+        case "P9":
+          return this.reply("\u672C\u65E5\u306F\u304A\u6642\u9593\u3092\u3044\u305F\u3060\u304D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002", "END", fired, "\u7DE0\u3081\u5B8C\u4E86");
+        default:
+          return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002", "END", fired, "\u7D42\u8A71");
+      }
+    }
+    // ---------- ガードレール優先の分岐（設計書 §5） ----------
+    byGuardrail(text, fired) {
+      const has = (id) => fired.includes(id);
+      if (has("R5")) {
+        return this.reply(
+          "\u7D1B\u3089\u308F\u3057\u304F\u3066\u7533\u3057\u8A33\u3054\u3056\u3044\u307E\u305B\u3093\u3002\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
+          this.state.phase,
+          fired,
+          "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63"
+        );
+      }
+      if (has("R7")) {
+        return this.reply(
+          "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u4EE3\u8868\u306E\u65B9\u306F\u3044\u3064\u9803\u304A\u623B\u308A\u3067\u3057\u3087\u3046\u304B\u3002\u304A\u7E4B\u304E\u3044\u305F\u3060\u304D\u3084\u3059\u3044\u6642\u9593\u5E2F\u3060\u3051\u6559\u3048\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002",
+          this.state.phase,
+          fired,
+          "R7: \u30D2\u30A2\u30EA\u30F3\u30B0\u3092\u6B62\u3081\u3066\u6B21\u56DE\u63A5\u89E6\u6761\u4EF6\u306E\u78BA\u5B9A\u3078"
+        );
+      }
+      if (has("R1")) {
+        return this.reply(
+          "\u305D\u3046\u306A\u306E\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u3053\u308C\u304B\u3089\u4F5C\u3089\u308C\u308B\u524D\u63D0\u3067\u3001\u5F79\u54E1\u69D81\u540D\u304B\u3089\u3067\u3082\u3054\u5C0E\u5165\u3044\u305F\u3060\u3051\u307E\u3059\u3002" + PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+          "P3",
+          fired,
+          "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u5DEE\u5225\u5316(P3)\u3078"
+        );
+      }
+      if (has("R3")) {
+        return this.reply(
+          "\u3055\u3059\u304C\u3067\u3059\u306D\u3002\u5148\u751F\u306B\u3054\u76F8\u8AC7\u3044\u305F\u3060\u304F\u305F\u3081\u306E\u5224\u65AD\u6750\u6599\u3092\u304A\u6E21\u3057\u3059\u308B\u3068\u3053\u308D\u307E\u3067\u304C\u79C1\u3069\u3082\u306E\u62C5\u5F53\u3067\u3059\u306E\u3067\u3001\u305D\u306E\u6750\u6599\u3060\u3051\u304A\u6301\u3061\u3067\u304D\u308C\u3070\u3068\u601D\u3063\u3066\u304A\u308A\u307E\u3059\u3002",
+          this.state.phase,
+          fired,
+          "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u5224\u65AD\u6750\u6599\u306E\u63D0\u4F9B\u306B\u56DE\u308B"
+        );
+      }
+      if (has("R4")) {
+        return this.reply(
+          "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u8CC7\u6599\u306F\u30E1\u30FC\u30EB\u30FBSMS\u30FB\u90F5\u9001\u306E\u3044\u305A\u308C\u304C\u3088\u308D\u3057\u3044\u3067\u3057\u3087\u3046\u304B\u3002\u304A\u9001\u308A\u3057\u305F\u3046\u3048\u3067\u3001\u6539\u3081\u3066\u3054\u611F\u60F3\u3060\u3051\u4F3A\u3046\u304A\u96FB\u8A71\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u6765\u9031\u3067\u3057\u305F\u3089\u524D\u534A\u3068\u5F8C\u534A\u3069\u3061\u3089\u304C\u3054\u90FD\u5408\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F",
+          this.state.phase,
+          fired,
+          "R4: \u9001\u4ED8\u624B\u6BB5\u306E\u9078\u629E\uFF0B\u518D\u67B6\u96FB\u65E5\u306E\u78BA\u5B9A\u3092\u30BB\u30C3\u30C8\u3067"
+        );
+      }
+      if (has("R2")) {
+        const target = this.state.phase === "P8" || this.state.phase === "P9" ? this.state.phase : "P6";
+        return this.reply(
+          "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u304A\u6642\u9593\u306F\u53D6\u3089\u305B\u307E\u305B\u3093\u3002" + PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+          target,
+          fired,
+          "R2: \u8AAC\u660E\u3092\u88AB\u305B\u305A\u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA\u3078"
+        );
+      }
+      return null;
+    }
+    // ---------- フェーズ別の意図判定 ----------
+    p0(text, fired) {
+      if (REFUSE_SALES.test(text)) {
+        return this.reply(PHASES.P0X.mustSay.join(" "), "P0X", fired, "\u53D7\u4ED8\u30D6\u30ED\u30C3\u30AF \u2192 \u75D5\u8DE1\u3092\u6B8B\u3057\u3066\u64A4\u9000");
+      }
+      if (TRANSFER.test(text)) {
+        return this.reply(
+          "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u3088\u308D\u3057\u304F\u304A\u9858\u3044\u3044\u305F\u3057\u307E\u3059\u3002",
+          "P1",
+          fired,
+          "\u53D6\u6B21\u304E\u767A\u751F \u2192 \u4EE3\u8868\u304C\u51FA\u308B\u306E\u3092\u5F85\u3064(P1)"
+        );
+      }
+      if (ASK_PURPOSE.test(text)) {
+        return this.reply(PHASES.P0.conditional[0]?.say ?? "", "P0", fired, "\u7528\u4EF6\u3092\u554F\u308F\u308C\u305F \u2192 \u5DFB\u304D\u8FBC\u307F\u8CEA\u554F\u3067\u8FD4\u3059");
+      }
+      return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", fired, "\u53D6\u6B21\u304E\u4F9D\u983C\u3092\u7C21\u6F54\u306B\u7E70\u308A\u8FD4\u3059");
+    }
+    p1(text, fired) {
+      const introduced = this.state.turns.some(
+        (t) => t.speaker === "agent" && /突然のお電話/.test(t.text)
+      );
+      if (!introduced) {
+        return this.reply(PHASES.P1.mustSay.join(" "), "P1", fired, "\u4EE3\u8868\u63A5\u7D9A \u2192 \u540D\u4E57\u308A\uFF0B\u7ACB\u5834\u306E\u5207\u308A\u5206\u3051\uFF0B\u5DFB\u304D\u8FBC\u307F\u8CEA\u554F");
+      }
+      const ack = /保険/.test(text) ? "\u4FDD\u967A\u3067\u3054\u6E96\u5099\u3055\u308C\u3066\u3044\u308B\u3093\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002" : /中退共/.test(text) ? "\u4E2D\u9000\u5171\u306B\u3054\u52A0\u5165\u306A\u3093\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002" : "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002";
+      return this.reply(
+        `${ack}\u3061\u306A\u307F\u306B\u305D\u3061\u3089\u306F\u3001${DEMO_SCENARIO.contactName}\u69D8\u3054\u81EA\u8EAB\u306E\u9000\u8077\u91D1\u306E\u3054\u6E96\u5099\u3068\u3057\u3066\u3082\u5341\u5206\u306B\u6D3B\u7528\u3067\u304D\u3066\u3044\u3089\u3063\u3057\u3083\u3044\u307E\u3059\u304B\uFF1F`,
+        "P2",
+        fired,
+        "\u53D7\u3051\u6B62\u3081 \u2192 \u5145\u8DB3\u5EA6\u8CEA\u554F\uFF08\u300C\u3042\u308B\u304B\u300D\u3067\u306F\u306A\u304F\u300C\u8DB3\u308A\u3066\u3044\u308B\u304B\u300D\uFF09"
+      );
+    }
+    p2(text, fired) {
+      return this.reply(
+        PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+        "P3",
+        fired,
+        "\u73FE\u72B6\u306E\u4E0D\u8DB3\u30FB\u4E0D\u660E\u3092\u78BA\u8A8D \u2192 \u5DEE\u5225\u5316(P3)"
+      );
+    }
+    p3(text, fired) {
+      if (/中退共/.test(text)) {
+        return this.reply(
+          PHASES.P3.conditional[0]?.say ?? "",
+          "P3",
+          fired,
+          "\u6761\u4EF6\u5206\u5C90: \u4E2D\u9000\u5171\u306F\u5F93\u696D\u54E1\u306E\u307F\u304C\u5BFE\u8C61"
+        );
+      }
+      if (/(iDeCo|イデコ|小規模企業共済)/i.test(text)) {
+        return this.reply(
+          PHASES.P3.conditional[1]?.say ?? "",
+          "P3",
+          fired,
+          "\u6761\u4EF6\u5206\u5C90: iDeCo\u30FB\u5C0F\u898F\u6A21\u4F01\u696D\u5171\u6E08\u3068\u306F\u4F75\u7528\u53EF\u80FD"
+        );
+      }
+      if (this.state.lawChangeHookUsed) {
+        return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u306F\u4F7F\u7528\u6E08\u307F \u2192 P5 \u3078");
+      }
+      return this.reply(PHASES.P4.mustSay.join(" "), "P4", fired, "\u5DEE\u5225\u5316\u3092\u7406\u89E3 \u2192 \u6CD5\u6539\u6B63\u30D5\u30C3\u30AF(1\u56DE\u306E\u307F)");
+    }
+    p5(text, fired) {
+      if (YES.test(text) && !NO.test(text)) {
+        return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u5373OK \u2192 \u65E5\u7A0B2\u629E\u30AF\u30ED\u30FC\u30BA");
+      }
+      return this.reply(
+        PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+        "P6",
+        fired,
+        "\u4FDD\u7559\u30FB\u8981\u76F8\u8AC7 \u2192 \u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA"
+      );
+    }
+    p6(text, fired) {
+      if (YES.test(text) && !NO.test(text)) {
+        return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u4EEE\u62BC\u3055\u3048\u540C\u610F \u2192 \u65E5\u7A0B2\u629E");
+      }
+      return this.reply(
+        "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u672C\u65E5\u4E2D\u3067\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u308B\u9803\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u304B\uFF1F",
+        "P6",
+        fired,
+        "\u518D\u67B6\u96FB\u306E\u7D04\u675F\u306B\u5207\u308A\u66FF\u3048"
+      );
+    }
+    p7(text, fired) {
+      if (/(ズーム|zoom)/i.test(text) && /(何|なに|わからない|分からない|使えない|詳しくない)/.test(text)) {
+        return this.reply(
+          "\u30B9\u30DE\u30FC\u30C8\u30D5\u30A9\u30F3\u3067\u3082\u53C2\u52A0\u3067\u304D\u307E\u3059\u3002\u30E1\u30FC\u30EB\u3067\u304A\u9001\u308A\u3059\u308BURL\u3092\u30BF\u30C3\u30D7\u3044\u305F\u3060\u304F\u3060\u3051\u3067\u3059\u3002",
+          "P7",
+          fired,
+          "\u6761\u4EF6\u5206\u5C90: Zoom \u306E\u8AAC\u660E"
+        );
+      }
+      if (/(遠い|距離|来られ|お越し)/.test(text)) {
+        return this.reply("\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u79FB\u52D5\u306F\u4E0D\u8981\u3067\u3059\u3002", "P7", fired, "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u306A\u306E\u3067\u79FB\u52D5\u4E0D\u8981");
+      }
+      const sc = DEMO_SCENARIO;
+      if (/(午前|午後|朝|夕方)/.test(text)) {
+        return this.reply(
+          `\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u3067\u306F${sc.proposedDate}${sc.proposedTime}\u304B\u3089${sc.meetingMinutes}\u5206\u3067\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+          "P7",
+          fired,
+          "2\u629E\u306E\u56DE\u7B54 \u2192 1\u70B9\u306B\u78BA\u5B9A\u3055\u305B\u308B"
+        );
+      }
+      if (YES.test(text) && !NO.test(text)) {
+        applyExtracted(this.state, {
+          appointment_date: sc.proposedDate,
+          appointment_time: sc.proposedTime,
+          zoom_agreed: true,
+          duration_agreed: true
+        });
+        this.pending = null;
+        return this.reply(
+          PHASES.P8.mustSay[0]?.replace(/^（[^）]*）/, "") ?? "",
+          "P8",
+          fired,
+          "\u65E5\u6642\u78BA\u5B9A \u2192 \u30D2\u30A2\u30EA\u30F3\u30B0\u306E\u8A31\u53EF\u53D6\u5F97(P8)"
+        );
+      }
+      return this.reply("\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u958B\u3044\u305F\u8CEA\u554F\u306F\u4F7F\u308F\u305A2\u629E\u3067\u805E\u304D\u76F4\u3059");
+    }
+    // ---------- P8: ヒアリング7項目 ----------
+    p8(text, fired) {
+      let note = "";
+      if (this.pending) {
+        const { facts, ok } = this.extract(this.pending, text);
+        if (ok) {
+          applyExtracted(this.state, facts);
+          note = `${this.pending} \u3092\u53D6\u5F97`;
+        } else {
+          return this.reply(this.askText(this.pending), "P8", fired, `${this.pending} \u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`);
+        }
+      }
+      const nextSlot = this.nextSlot();
+      if (!nextSlot) {
+        this.pending = null;
+        return this.reply(
+          PHASES.P9.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+          "P9",
+          fired,
+          `${note || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 7\u9805\u76EE\uFF0B\u9023\u7D61\u5148\u304C\u63C3\u3063\u305F\u306E\u3067\u7DE0\u3081(P9)`
+        );
+      }
+      this.pending = nextSlot;
+      return this.reply(this.askText(nextSlot), "P8", fired, `${note ? note + " \u2192 " : ""}\u6B21\u306F ${nextSlot}`);
+    }
+    nextSlot() {
+      const h = missingHearing(this.state)[0];
+      if (h) return h;
+      if (!this.state.email) return "email";
+      if (!this.state.emailConfirmed) return "emailConfirm";
+      if (!this.state.callbackPhone) return "callbackPhone";
+      if (!this.state.callbackWindow) return "callbackWindow";
+      return null;
+    }
+    askText(slot) {
+      switch (slot) {
+        case "email":
+          return "\u4F1A\u793E\u6982\u8981\u3068Zoom\u306EURL\u3092\u304A\u9001\u308A\u3057\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F";
+        case "emailConfirm":
+          return `\u5FA9\u5531\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u3002${this.state.email} \u3067\u304A\u9593\u9055\u3044\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`;
+        case "callbackPhone":
+          return "\u524D\u65E5\u306B\u78BA\u8A8D\u306E\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u304A\u96FB\u8A71\u756A\u53F7\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F";
+        case "callbackWindow":
+          return "\u524D\u65E5\u306E\u3054\u9023\u7D61\u306F\u3001\u4F55\u6642\u9803\u304C\u7E4B\u304C\u308A\u3084\u3059\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F";
+        default:
+          return (HEARING_SLOT_MAP.get(slot)?.question ?? "").replace(/（[^）]*）\s*$/, "");
+      }
+    }
+    /** 「今どの項目を聞いているか」が分かっているので、その文脈で回答を解釈する。 */
+    extract(slot, text) {
+      const num = COUNT_RE.exec(text)?.[1];
+      switch (slot) {
+        case "H1":
+          return { facts: { H1: /(ない|いない|してません|していません|特に)/.test(text) ? "iDeCo\u30FB\u6295\u8CC7\u3068\u3082\u306B\u306A\u3057" : text }, ok: true };
+        case "H2":
+          return { facts: { H2: text }, ok: true };
+        case "H3": {
+          const m = AGE_RE.exec(text);
+          const age = m?.[1] ?? m?.[3];
+          return { facts: { H3: age ? `${age}\u6B73` : text }, ok: Boolean(age) };
+        }
+        case "H4":
+          return { facts: { H4: num ? `${num}\u540D\uFF08${text}\uFF09` : text }, ok: Boolean(num) };
+        case "H5":
+          return { facts: { H5: num ? `${num}\u540D` : text }, ok: Boolean(num) };
+        case "H6":
+          return {
+            facts: { H6: /(私|自分|はい|そうです|決められ)/.test(text) ? "\u4EE3\u8868\u306E\u5224\u65AD\u3067\u6C7A\u88C1\u53EF\u80FD" : text },
+            ok: true
+          };
+        case "H7": {
+          const m = MONTH_RE.exec(text);
+          return { facts: { H7: m ? `${m[1]}\u6708` : text }, ok: Boolean(m) };
+        }
+        case "email": {
+          const m = EMAIL_RE.exec(text.replace(/\s/g, ""));
+          return { facts: { email: m?.[0] ?? null }, ok: Boolean(m) };
+        }
+        case "emailConfirm":
+          return { facts: { email_confirmed: true }, ok: YES.test(text) && !NO.test(text) };
+        case "callbackPhone": {
+          const m = PHONE_RE.exec(text.replace(/\s/g, ""));
+          return { facts: { callback_phone: m?.[0] ?? null }, ok: Boolean(m) };
+        }
+        case "callbackWindow":
+          return { facts: { callback_window: text }, ok: /(午前|午後|朝|昼|夕方|夜|時|いつでも)/.test(text) };
+      }
+    }
+    // ---------- 応答の確定（フィルタ・遷移検証・履歴） ----------
+    reply(raw, proposed, fired, matched) {
+      const fixed = autoFix(raw);
+      const blocked = checkForbidden(raw).filter((v) => v.fixable);
+      const utterance = fixed.text;
+      applyExtracted(this.state, {
+        calendar_requested: /カレンダー/.test(utterance),
+        law_change_hook_used: /(法改正|62,?000円)/.test(utterance)
+      });
+      const forbidEnd = Object.keys(GUARDRAILS).filter((id) => GUARDRAILS[id].forbidEnd);
+      const t = resolveTransition(this.state, proposed, fired, forbidEnd);
+      this.state.turns.push({
+        index: this.state.turns.length,
+        speaker: "agent",
+        text: utterance,
+        phase: this.state.phase,
+        blockedViolations: blocked.length > 0 ? blocked : void 0,
+        note: matched
+      });
+      this.state.blockedViolationCount += blocked.length;
+      this.state.phase = t.phase;
+      if (t.phase === "END" || t.phase === "P0X") this.state.ended = t.phase === "END";
+      return {
+        utterance,
+        phase: t.phase,
+        guardrails: fired,
+        matched,
+        overrideReason: t.overrideReason,
+        blocked
+      };
+    }
+    /** 相手の発話を履歴に積む（画面側から呼ぶ）。 */
+    pushCustomer(text, guardrails) {
+      this.state.turns.push({
+        index: this.state.turns.length,
+        speaker: "customer",
+        text,
+        phase: this.state.phase,
+        guardrails
+      });
+    }
+  };
+
   // src/web/main.ts
   var $ = (id) => {
     const el2 = document.getElementById(id);
@@ -845,6 +1382,9 @@
   };
   var state = createCallState();
   var engine = new MockCallEngine(state);
+  var dialog = new DialogEngine(state);
+  var mic = new MicInput();
+  var mode = () => $("mode").value ?? "script";
   function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -1019,11 +1559,140 @@
   }
   var pause = (ms) => new Promise((r) => window.setTimeout(r, ms));
   var lastPhase = null;
+  function setMicNote(text, isError = false) {
+    const n = $("micnote");
+    n.textContent = text;
+    n.className = `micnote${isError ? " err" : ""}`;
+  }
+  var interimNode = null;
+  function showInterim(text) {
+    if (!interimNode) {
+      if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+      interimNode = pushMessage("cust", "\u76F8\u624B", text);
+      interimNode.classList.add("interim");
+    } else {
+      const bubble = interimNode.querySelector(".bubble");
+      if (bubble) bubble.textContent = text;
+    }
+    scrollToActive(interimNode);
+  }
+  function clearInterim() {
+    interimNode?.remove();
+    interimNode = null;
+  }
+  async function handleCustomerUtterance(text) {
+    if (busy || state.ended) return;
+    busy = true;
+    syncButtons();
+    try {
+      if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+      const guardrails = detectGuardrails(text);
+      dialog.pushCustomer(text, guardrails);
+      const custNode = pushMessage("cust", "\u76F8\u624B", text);
+      if (guardrails.length > 0) {
+        pushFlag(
+          `\u30AC\u30FC\u30C9\u30EC\u30FC\u30EB\u691C\u77E5: ${guardrails.map((g) => `${g}\uFF08${GUARDRAILS[g].trigger}\uFF09`).join(" / ")}`
+        );
+      }
+      scrollToActive(custNode);
+      await pause(200);
+      const r = dialog.respond(text);
+      if (r.overrideReason) pushFlag(`\u26A0 \u9077\u79FB\u3092\u5374\u4E0B: ${r.overrideReason}`);
+      if (r.blocked.length > 0) {
+        pushFlag(
+          `\u51FA\u529B\u524D\u30D5\u30A3\u30EB\u30BF: ${r.blocked.map((v) => `\u300C${v.matched}\u300D(${v.ruleId})`).join(", ")} \u3092\u76F8\u624B\u306B\u5C4A\u304F\u524D\u306B\u906E\u65AD`
+        );
+      }
+      if (r.phase !== lastPhase) {
+        pushPhaseSeparator(r.phase);
+        lastPhase = r.phase;
+      }
+      const node = pushMessage("ai", "AI", r.utterance);
+      const why = el("div", "flag", `\u5224\u5B9A: ${r.matched}`);
+      transcript().append(why);
+      node.classList.add("speaking");
+      renderAll();
+      scrollToActive(node);
+      await speak(r.utterance);
+      node.classList.remove("speaking");
+      renderAll();
+    } finally {
+      busy = false;
+      syncButtons();
+    }
+  }
+  function toggleMic() {
+    const btn = $("mic");
+    if (mic.listening) {
+      mic.stop();
+      return;
+    }
+    window.speechSynthesis?.cancel();
+    setMicNote("\u304A\u8A71\u3057\u304F\u3060\u3055\u3044\u2026");
+    btn.classList.add("on");
+    btn.textContent = "\u25A0 \u8A71\u3057\u7D42\u308F\u308A";
+    mic.start({
+      onInterim: showInterim,
+      onFinal: (text) => {
+        clearInterim();
+        setMicNote("");
+        void handleCustomerUtterance(text);
+      },
+      onError: (msg) => {
+        clearInterim();
+        setMicNote(msg, true);
+      },
+      onEnd: () => {
+        btn.classList.remove("on");
+        btn.textContent = "\u{1F3A4} \u30DE\u30A4\u30AF\u3067\u8A71\u3059";
+        clearInterim();
+      }
+    });
+  }
+  function applyMode() {
+    const m = mode();
+    $("mic").hidden = m !== "mic";
+    $("next").hidden = m === "mic";
+    $("play").hidden = m === "mic";
+    if (m === "mic") {
+      mic.abort();
+      setMicNote(
+        micSupported() ? "\u300C\u{1F3A4} \u30DE\u30A4\u30AF\u3067\u8A71\u3059\u300D\u3092\u62BC\u3057\u3066\u8A71\u3057\u304B\u3051\u3066\u304F\u3060\u3055\u3044\u3002AI \u304C\u30D5\u30A7\u30FC\u30BA\u3068\u30AC\u30FC\u30C9\u30EC\u30FC\u30EB\u3067\u5206\u5C90\u3057\u3066\u5FDC\u7B54\u3057\u307E\u3059\u3002" : "\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u306F\u97F3\u58F0\u8A8D\u8B58\u306B\u5BFE\u5FDC\u3057\u3066\u3044\u307E\u305B\u3093\uFF08Chrome / Edge / Safari \u3092\u304A\u4F7F\u3044\u304F\u3060\u3055\u3044\uFF09\u3002",
+        !micSupported()
+      );
+      $("mic").disabled = !micSupported();
+      if (state.turns.length === 0) void startCall();
+    } else {
+      mic.abort();
+      setMicNote("");
+    }
+    syncButtons();
+  }
+  async function startCall() {
+    busy = true;
+    syncButtons();
+    try {
+      if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+      const r = dialog.greeting();
+      pushPhaseSeparator(r.phase);
+      lastPhase = r.phase;
+      const node = pushMessage("ai", "AI", r.utterance);
+      node.classList.add("speaking");
+      renderAll();
+      scrollToActive(node);
+      await speak(r.utterance);
+      node.classList.remove("speaking");
+    } finally {
+      busy = false;
+      syncButtons();
+    }
+  }
   var busy = false;
   var playing = false;
   function syncButtons() {
     $("next").disabled = state.ended || busy;
     $("play").disabled = state.ended;
+    $("mic").disabled = state.ended || busy || !micSupported();
     $("play").textContent = playing ? "\u23F8 \u505C\u6B62" : "\u23E9 \u81EA\u52D5\u518D\u751F";
   }
   async function step() {
@@ -1091,13 +1760,18 @@
     stopPlay();
     window.speechSynthesis?.cancel();
     busy = false;
+    mic.abort();
+    clearInterim();
+    setMicNote("");
     state = createCallState();
     engine = new MockCallEngine(state);
+    dialog = new DialogEngine(state);
     lastPhase = null;
     clearTranscript();
     setFollow(true);
     renderAll();
     window.scrollTo({ top: 0 });
+    if (mode() === "mic") void startCall();
   }
   renderScenario();
   renderAll();
@@ -1115,5 +1789,8 @@
   $("voice").addEventListener("change", () => {
     if (!voiceOn()) window.speechSynthesis?.cancel();
   });
+  $("mic").addEventListener("click", toggleMic);
+  $("mode").addEventListener("change", applyMode);
+  applyMode();
   void initVoices();
 })();
