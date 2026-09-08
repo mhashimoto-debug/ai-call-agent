@@ -1,0 +1,76 @@
+# ============================================================
+# 機密・個人情報を含む資料（絶対にコミットしないこと）
+# ============================================================
+
+# 通話録音（音声データ・個人情報を含む）
+*.m4a
+*.mp3
+*.wav
+*.aac
+*.flac
+*.ogg
+録音データ/
+recordings/
+audio/
+
+# 配布・受領した圧縮ファイル
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# 顧客情報・架電リスト・文字起こしを含む業務ファイル
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.tsv
+*.docx
+*.pdf
+文字起こし/
+transcripts/
+data/raw/
+
+# 認証情報
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+service-account*.json
+secrets/
+
+# ============================================================
+# 開発環境
+# ============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
