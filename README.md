@@ -37,6 +37,9 @@ src/
   cli/main.ts      デモ実行（CLI）
   web/             Web フロントエンド（描画と再生制御のみ。会話ロジックは持たない）
 web/index.html     Web プロトタイプの外枠（app.js は build:web が生成）
+scripts/copy-web-root.mjs
+                   GitHub Pages 用に web/ の成果物をリポジトリ直下へコピー
+index.html / app.js  ↑の生成物（直接編集しない。編集は web/ 側）
 ```
 
 ## 実行
@@ -105,6 +108,16 @@ AI は以下の順で判定して応答し、**フェーズとガードレール
 - 再生中に上へスクロールすると追従が止まり、右下の「⤓ 最新の発話に追従」で復帰します
 - ビルド済みの `web/app.js` をコミットしてあるため、サーバを立てずに
   `web/index.html` を直接ブラウザで開いても動きます（デモ当日の保険）
+
+### GitHub Pages で公開する
+
+`npm run build:web` は web/ をビルドしたあと、`web/index.html` と `web/app.js` を
+**リポジトリ直下にもコピー**します（`npm run copy:root` 単体でも実行可）。
+Pages を **main ブランチの `/ (root)`** で公開すれば、
+`https://<user>.github.io/ai-call-agent/` がそのままデモ画面になり、404 になりません。
+
+直下の `index.html` / `app.js` は生成物です。**編集は必ず `web/` 側**に行い、
+`npm run build:web` で反映してください（`.nojekyll` も同スクリプトが生成します）。
 
 **ブラウザ音声デモへの拡張点**は `src/web/main.ts` の2箇所だけです。
 
