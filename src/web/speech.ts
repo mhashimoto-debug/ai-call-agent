@@ -192,3 +192,46 @@ export async function speakUtterance(raw: string, opt: SpeakOptions): Promise<vo
     if (i < sentences.length - 1) await wait(opt.gapMs ?? 220);
   }
 }
+
+// ---------- 録音ファイルの再生（MP3 優先再生） ----------
+//
+// 各フェーズ・ガードレールには収録済みの音声（public/audio/*.mp3）がある。
+// 合成音声より収録音声のほうが自然なので、対応する録音があるときは必ずそちらを先に鳴らし、
+// 見つからない・鳴らせない場合だけ speakUtterance() にフォールバックする。
+
+let currentAudio: HTMLAudioElement | null = null;
+
+/** 再生中の録音を止める（リセット・マイク開始・停止操作から呼ぶ）。 */
+export function stopAudio(): void {
+  const a = currentAudio;
+  currentAudio = null;
+  if (!a) return;
+  a.pause();
+  a.currentTime = 0;
+}
+
+/**
+ * 録音を1本再生する。鳴り終わるまで解決しないので、ログの表示と音声がずれない。
+ * 戻り値は「実際に再生できたか」。false ならフォールバックして読み上げる。
+ */
+export function playAudioFile(url: string): Promise<boolean> {
+  stopAudio();
+  return new Promise((resolve) => {
+    const audio = new Audio(url);
+    currentAudio = audio;
+
+    let done = false;
+    const finish = (ok: boolean): void => {
+      if (done) return;
+      done = true;
+      if (currentAudio === audio) currentAudio = null;
+      resolve(ok);
+    };
+
+    audio.onended = () => finish(true);
+    // ファイルが無い・デコードできない場合は読み上げに回す
+    audio.onerror = () => finish(false);
+    // 自動再生がブロックされた場合も同様（マイク操作後なので通常は起きない）
+    audio.play().catch(() => finish(false));
+  });
+}

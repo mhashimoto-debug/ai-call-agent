@@ -18,7 +18,7 @@ import { createCallState, type CallState } from "../domain/state.js";
 import { MockCallEngine } from "../demo/mockEngine.js";
 import { DEMO_SCENARIO } from "../demo/scenario.js";
 import type { PhaseId } from "../domain/types.js";
-import { japaneseVoices, speakUtterance } from "./speech.js";
+import { japaneseVoices, playAudioFile, speakUtterance, stopAudio } from "./speech.js";
 import { MicInput, micSupported } from "./mic.js";
 import { DialogEngine } from "../demo/dialogEngine.js";
 import { detectGuardrails } from "../domain/guardrails.js";
@@ -252,6 +252,23 @@ function speak(text: string): Promise<void> {
   return speakUtterance(text, { voice: selectedVoice(), rate: 1.0, gapMs: 240 });
 }
 
+/**
+ * AI の発話を鳴らす。
+ * 対応する録音（public/audio/*.mp3）があれば合成音声より優先して再生し、
+ * 録音が無い発話（その場で組み立てた質問文など）と再生に失敗したときだけ読み上げる。
+ */
+async function speakReply(text: string, audioFile?: string): Promise<void> {
+  if (!voiceOn()) return;
+  if (audioFile && (await playAudioFile(audioFile))) return;
+  await speak(text);
+}
+
+/** 音声の停止（読み上げ・録音の両方）。 */
+function stopVoice(): void {
+  window.speechSynthesis?.cancel();
+  stopAudio();
+}
+
 const pause = (ms: number): Promise<void> =>
   new Promise((r) => window.setTimeout(r, ms));
 
@@ -318,13 +335,14 @@ async function handleCustomerUtterance(text: string): Promise<void> {
       lastPhase = r.phase;
     }
     const node = pushMessage("ai", "AI", r.utterance);
-    // 「なぜこう返したか」を内部メモとして出す
-    const why = el("div", "flag", `判定: ${r.matched}`);
+    // 「なぜこう返したか」と、どの音源で喋るかを内部メモとして出す
+    const source = r.audioFile ? `録音 ${r.audioFile.split("/").pop()}` : "音声合成";
+    const why = el("div", "flag", `判定: ${r.matched} ／ 音源: ${source}`);
     transcript().append(why);
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
-    await speak(r.utterance);
+    await speakReply(r.utterance, r.audioFile);
     node.classList.remove("speaking");
     renderAll();
   } finally {
@@ -339,7 +357,7 @@ function toggleMic(): void {
     mic.stop(); // 手動で確定
     return;
   }
-  window.speechSynthesis?.cancel();
+  stopVoice();
   setMicNote("お話しください…");
   btn.classList.add("on");
   btn.textContent = "■ 話し終わり";
@@ -399,7 +417,7 @@ async function startCall(): Promise<void> {
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
-    await speak(r.utterance);
+    await speakReply(r.utterance, r.audioFile);
     node.classList.remove("speaking");
   } finally {
     busy = false;
@@ -484,7 +502,7 @@ function stopPlay(): void {
 function togglePlay(): void {
   if (playing) {
     stopPlay();
-    window.speechSynthesis?.cancel();
+    stopVoice();
     return;
   }
   playing = true;
@@ -494,7 +512,7 @@ function togglePlay(): void {
 
 function reset(): void {
   stopPlay();
-  window.speechSynthesis?.cancel();
+  stopVoice();
   busy = false;
   mic.abort();
   clearInterim();
@@ -517,7 +535,7 @@ renderAll();
 
 $("next").addEventListener("click", () => {
   stopPlay();
-  window.speechSynthesis?.cancel();
+  stopVoice();
   void step();
 });
 $("play").addEventListener("click", togglePlay);
@@ -528,7 +546,7 @@ $("follow").addEventListener("click", () => {
 });
 // 読み上げを途中でOFFにしたら即座に止める（待機中の Promise も解決される）
 $("voice").addEventListener("change", () => {
-  if (!voiceOn()) window.speechSynthesis?.cancel();
+  if (!voiceOn()) stopVoice();
 });
 $("mic").addEventListener("click", toggleMic);
 $("mode").addEventListener("change", applyMode);

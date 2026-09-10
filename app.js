@@ -314,9 +314,17 @@
       id: "R1",
       trigger: "\u300C\u9000\u8077\u91D1\u5236\u5EA6\u306F\u306A\u3044\u300D\u300C\u3053\u308C\u304B\u3089\u300D",
       patterns: [
-        /(退職金|制度)[^。]{0,12}(ない|ありません|やってない|やっていない|入ってない|未導入)/,
-        /これから(考え|検討|作)/,
-        /(何も|特に)(やって|して)(ない|いない|おりません)/
+        // 「制度がない」の直接表現（表記ゆれ・丁寧語・方言を含む）
+        /(退職金|退職金制度|制度|積立|積み立て|企業年金|年金|共済)[^。]{0,15}(ない|ないです|ありませ|ございませ|やってな|やっていな|やっとらん|入ってな|入っていな|加入してな|導入してな|導入していな|未導入|してない|していない|しておりませ|組んでな|設けて(ない|いない|おりませ))/,
+        // 「これから作る」＝ホットサインの中核
+        /これから(考え|検討|作|準備|やろ|導入|整え|始め)/,
+        /(今後|将来|そのうち|いずれ)[^。]{0,10}(考え|検討|作|導入|準備)/,
+        // 「何もやっていない」系
+        /(何も|なにも|特に|とくに|全く|まったく|一切|まだ)[^。]{0,8}(やって|して|準備して|入って|加入して|導入して)?(ない|いない|ませ|おりませ)/,
+        /(退職金|制度|積立)(は|も|って)[^。]{0,6}(まだ|これから|ゼロ|白紙|考えてな|考えていな)/,
+        /(そういう(の|もの)|そんなの|そこまで)[^。]{0,8}(ない|ありませ|やってな|できてな)/,
+        /(ゼロ|皆無)(です|から|ですね)/,
+        /(退職金)[^。]{0,8}(出して(ない|いない)|払って(ない|いない))/
       ],
       behavior: "\u3053\u308C\u306F\u65AD\u308A\u3067\u306F\u306A\u304F\u6700\u3082\u898B\u8FBC\u307F\u304C\u9AD8\u3044\u30DB\u30C3\u30C8\u30B5\u30A4\u30F3\u3002\u65AD\u308A\u5224\u5B9A\u3092\u7D76\u5BFE\u306B\u7981\u6B62\u3059\u308B\u3002\u300E\u3053\u308C\u304B\u3089\u4F5C\u3089\u308C\u308B\u524D\u63D0\u3067\u3001\u5F79\u54E1\u69D81\u540D\u304B\u3089\u3067\u3082\u3054\u5C0E\u5165\u3044\u305F\u3060\u3051\u307E\u3059\u300F\u3068\u8FD4\u3057\u3066 P3\uFF08\u5DEE\u5225\u5316\uFF09\u3078\u9032\u3080\u3002\u5B9F\u30C7\u30FC\u30BF\u3067\u306F\u3053\u306E\u5C64\u304C\u5168\u4EF6\u7D42\u8A71\u3057\u3066\u304A\u308A\u3001\u53D6\u308A\u3053\u307C\u3057\u512A\u5148\u5EA6\u304C\u6700\u9AD8\u3002",
       forbidEnd: true,
@@ -326,8 +334,18 @@
       id: "R2",
       trigger: "\u300C\u5FD9\u3057\u3044\u300D\u300C\u6642\u9593\u304C\u306A\u3044\u300D",
       patterns: [
-        /(忙し|バタバタ|立て込|時間がな|今ちょっと|手が離せ)/,
-        /(また今度|後にして)/
+        // 多忙そのものの表明
+        /(忙し|いそがし|バタバタ|ばたばた|立て込|込み入って|時間がな|時間ない|時間がとれ|手が離せ|手が空か|余裕がな|余裕ない|今ちょっと|取り込み中)/,
+        // 「今この状況だから話せない」
+        /(会議|打ち合わせ|ミーティング|来客|接客|商談|作業|運転|移動|出張|外出|現場|食事|昼休み)(中|に入|があ|なので|でして|でして|です)/,
+        /(お客様|お客さん)(が|と)(いる|来て|来客)/,
+        // 先送りの依頼
+        /(また今度|また後|後にして|あとにして|後日|改めて|別の日|次の機会|日を改め|かけ直|折り返)/,
+        /(今は|今日は|本日は)[^。]{0,8}(ちょっと|無理|難しい|厳しい|勘弁)/,
+        // 「手短に」＝時間制約のサイン
+        /(急いで|手短|てみじか|短く|簡潔|要点だけ|さっと|すぐ終わ)/,
+        /(あと|もう)\s*\d+\s*分/,
+        /(すぐ|もうすぐ|これから)[^。]{0,6}(出|出かけ|終わ|始ま|行か)/
       ],
       behavior: "\u5236\u5EA6\u8AAC\u660E\u3092\u7D76\u5BFE\u306B\u88AB\u305B\u306A\u3044\u3002\u65B0\u3057\u3044\u60C5\u5831\u3092\u8DB3\u3055\u305A\u3001\u300E\u672C\u65E5\u4E2D\u3067\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u308B\u9803\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u304B\uFF1F\u300F\u307E\u305F\u306F P6 \u306E\u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA\u306E\u307F\u3092\u884C\u3046\u3002\u5B9F\u30C7\u30FC\u30BF\u3067\u306F\u8AAC\u660E\u3092\u88AB\u305B\u305F\u67B6\u96FB\u306F10\u4EF6\u4EE5\u4E0A\u3059\u3079\u3066\u5207\u3089\u308C\u3066\u3044\u308B\u3002",
       forbidEnd: false,
@@ -336,14 +354,25 @@
     R3: {
       id: "R3",
       trigger: "\u300C\u7A0E\u7406\u58EB\u30FB\u793E\u52B4\u58EB\u306B\u4EFB\u305B\u3066\u3044\u308B\u300D",
-      patterns: [/(税理士|会計士|社労士|社会保険労務士|顧問)[^。]{0,15}(任せ|お願い|相談|通じ)/],
+      patterns: [
+        /(税理士|会計士|公認会計士|社労士|社会保険労務士|顧問|先生|会計事務所|税理士事務所|FP|ファイナンシャルプランナー|保険屋|保険会社|保険の担当|銀行|信金|証券|コンサル|専門家|プロ)[^。]{0,20}(任せ|まかせ|お願い|頼んで|相談|通じ|やってもら|見てもら|入って|担当|一任|決めて|聞いて|確認して)/,
+        /(税理士|会計士|社労士|顧問|先生|担当の方)(に|と|が|から)[^。]{0,10}(聞|確認|話|相談|通し)/,
+        /(そういう(の|こと)|そのへん|その辺|そこ)[^。]{0,10}(専門家|税理士|社労士|顧問|先生)/,
+        /(顧問|担当)(の|が)(税理士|社労士|先生|方)/
+      ],
       behavior: "\u5426\u5B9A\u3057\u306A\u3044\u3002\u300E\u5148\u751F\u306B\u3054\u76F8\u8AC7\u3044\u305F\u3060\u304F\u305F\u3081\u306E\u5224\u65AD\u6750\u6599\u3092\u304A\u6E21\u3057\u3059\u308B\u3068\u3053\u308D\u307E\u3067\u304C\u79C1\u3069\u3082\u306E\u62C5\u5F53\u3067\u3059\u300F\u3068\u8FD4\u3059\u3002\u300E\u7A0E\u7406\u58EB\u306F\u8A73\u3057\u304F\u306A\u3044\u300F\u7B49\u306E\u5C02\u9580\u5BB6\u3092\u4E0B\u3052\u308B\u8868\u73FE\u306F\u53CD\u767A\u3092\u62DB\u304F\u305F\u3081\u7D76\u5BFE\u306B\u7981\u6B62\u3002",
       forbidEnd: true
     },
     R4: {
       id: "R4",
       trigger: "\u300C\u8CC7\u6599\u3060\u3051\u9001\u3063\u3066\u300D",
-      patterns: [/(資料|パンフ|案内)[^。]{0,10}(送っ|送付|メール|くださ|ください)/],
+      patterns: [
+        /(資料|パンフ|パンフレット|案内|ご案内|書類|概要|カタログ|チラシ|データ|詳細)[^。]{0,12}(送っ|送付|郵送|投函|メール|ファックス|FAX|くださ|ちょうだい|頂戴|ほしい|欲しい|いただけ|もらえ|もらい)/,
+        /(まず|とりあえず|一旦|いったん|一度|先に)[^。]{0,10}(資料|書面|紙|見て|見せて|読ませ|拝見|目を通)/,
+        /(ホームページ|ＨＰ|HP|ウェブ|サイト|URL|メール)[^。]{0,12}(見|拝見|教え|送)/,
+        /(送っておいて|送るだけ|送ってもら|置いていって)/,
+        /(見てから|読んでから|目を通してから)[^。]{0,10}(判断|検討|連絡|考え)/
+      ],
       behavior: "\u9001\u4ED8\u3060\u3051\u3067\u7D42\u308F\u3089\u305B\u306A\u3044\u3002\u9001\u4ED8\u624B\u6BB5\u306E\u9078\u629E\u80A2\uFF08SMS / \u30E1\u30FC\u30EB / \u5C01\u66F8\uFF09\u3092\u63D0\u793A\u3057\u3001\u5FC5\u305A\u518D\u67B6\u96FB\u65E5\u306E\u78BA\u5B9A\u3092\u30BB\u30C3\u30C8\u3067\u53D6\u308B\u3002",
       forbidEnd: true
     },
@@ -351,18 +380,26 @@
       id: "R5",
       trigger: "\u76F8\u624B\u304C\u516C\u7684\u6A5F\u95A2\u3068\u8AA4\u8A8D\u3057\u3066\u3044\u308B",
       patterns: [
-        /(お国|国が|役所|公的|行政|厚労省の方|市役所|年金機構)/,
-        /(手数料|費用)[^。]{0,10}(かからん|かからない|無料)/
+        /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省)[^。]{0,10}(の方|の人|ですか|でしょ|から|さん|なんです|ですよね)/,
+        /(年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労基|労働基準監督署)/,
+        /(手数料|費用|お金|料金|コスト)[^。]{0,12}(かからん|かからない|かかりません|いらない|不要|無料|ただ|タダ)/,
+        /(補助金|助成金|給付金|税金で)/,
+        /(公務員|職員|担当官)(の方|さん|ですか)/,
+        /(国|行政|役所)(が|の)(やって|やる|運営|主催)/
       ],
-      behavior: "\u5373\u5EA7\u306B\u300E\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3059\u300F\u3092\u518D\u63D0\u793A\u3059\u308B\u3002\u8AA4\u8A8D\u3092\u653E\u7F6E\u3057\u305F\u307E\u307E\u4F1A\u8A71\u3092\u9032\u3081\u306A\u3044\u3002",
+      behavior: "\u5373\u5EA7\u306B\u300E\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u304C\u7BA1\u8F44\u3059\u308B\u5236\u5EA6\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3059\u300F\u3092\u518D\u63D0\u793A\u3059\u308B\u3002\u8AA4\u8A8D\u3092\u653E\u7F6E\u3057\u305F\u307E\u307E\u4F1A\u8A71\u3092\u9032\u3081\u306A\u3044\u3002",
       forbidEnd: true
     },
     R7: {
       id: "R7",
       trigger: "\u5FDC\u5BFE\u8005\u304C\u4EE3\u8868\u3067\u306A\u3044\uFF0F\u6C7A\u88C1\u6A29\u304C\u306A\u3044",
       patterns: [
-        /(代表|社長)(は|が)(不在|おりません|席を外|外出|留守)/,
-        /(私では|自分では)[^。]{0,10}(分から|わから|決められ|決裁)/
+        /(代表|社長|専務|常務|会長|担当者|責任者|上の者|本人)(は|が|も)?[^。]{0,12}(不在|おりませ|いませ|席を外|外出|留守|出張|お休み|休んで|帰(り|って)|出て(ます|おり)|来て(ない|いない|おりませ))/,
+        /(私|自分|わたくし|わたし)(では|には|は|じゃ)[^。]{0,12}(分から|わから|存じ|決められ|決裁|権限|判断でき|答えられ|お答えでき|なんとも)/,
+        /(担当(では|じゃ)(ない|ありませ)|権限が(ない|ありませ)|決裁権(は|が)?(ない|ありませ))/,
+        /(受付|事務|経理|パート|アルバイト|留守番)(の者|の人|です|でして)/,
+        /(本社|本部|上の者|別の者|担当の者)(に|が|と)(確認|聞|回|代わ|繋)/,
+        /(代表|社長)(に|へ)[^。]{0,8}(伝え|確認|聞いて)(ておき|ます|てみ)/
       ],
       behavior: "\u30D2\u30A2\u30EA\u30F3\u30B0\u3092\u7D9A\u3051\u306A\u3044\u3002\u6B21\u56DE\u63A5\u89E6\u6761\u4EF6\uFF08\u4EE3\u8868\u306E\u51FA\u793E\u65E5\u30FB\u7E4B\u304C\u308A\u3084\u3059\u3044\u6642\u9593\u5E2F\uFF09\u306E\u78BA\u5B9A\u3060\u3051\u306B\u5207\u308A\u66FF\u3048\u308B\u3002",
       forbidEnd: false
@@ -837,6 +874,31 @@
       if (i < sentences.length - 1) await wait(opt.gapMs ?? 220);
     }
   }
+  var currentAudio = null;
+  function stopAudio() {
+    const a = currentAudio;
+    currentAudio = null;
+    if (!a) return;
+    a.pause();
+    a.currentTime = 0;
+  }
+  function playAudioFile(url) {
+    stopAudio();
+    return new Promise((resolve) => {
+      const audio = new Audio(url);
+      currentAudio = audio;
+      let done = false;
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        if (currentAudio === audio) currentAudio = null;
+        resolve(ok);
+      };
+      audio.onended = () => finish(true);
+      audio.onerror = () => finish(false);
+      audio.play().catch(() => finish(false));
+    });
+  }
 
   // src/web/mic.ts
   function ctor() {
@@ -1012,25 +1074,102 @@
   }
 
   // src/demo/dialogEngine.ts
-  var YES = /(はい|ええ|うん|そうです|大丈夫|かまいません|構いません|お願い|了解|わかりました|分かりました|いいです|結構ですよ|それで)/;
-  var NO = /(いいえ|いや|結構です|いりません|要りません|やめ|やらない|興味ない|不要)/;
-  var ASK_PURPOSE = /(ご用件|用件|どういった|どちら様|なんの|何の|どんな)/;
-  var TRANSFER = /(お待ち|代わり|かわり|繋ぎ|つなぎ|少々|担当に)/;
-  var REFUSE_SALES = /(営業|セールス|お断り|断るよう|取り次げ|取次ぎでき)/;
+  var AUDIO_BASE = "public/audio/";
+  var PHASE_AUDIO = {
+    P0: "p0_greeting.mp3",
+    P0X: "reject_closing.mp3",
+    P1: "p1_overview.mp3",
+    P2: "p2_p3_hearing.mp3",
+    P3: "p2_p3_hearing.mp3",
+    P4: "p4_p5_hearin.mp3",
+    P5: "p4_p5_hearin.mp3",
+    P6: "reschedule.mp3",
+    P7: "p7_schedule.mp3",
+    P8: "p8_recovery.mp3",
+    P9: "p9_closing.mp3"
+  };
+  var GUARDRAIL_AUDIO = {
+    R1: "r1_no_system.mp3",
+    R2: "r2_busy.mp3",
+    R3: "r3_expert.mp3",
+    R4: "r4_document.mp3",
+    R5: "r5_misunderstanding.mp3",
+    R7: "r7_absent.mp3"
+  };
+  var audioUrl = (file) => `${AUDIO_BASE}${file}`;
+  var YES = /(はい|ええ|うん|そうです|そうですね|そうしま|もちろん|ぜひ|是非|わかりました|分かりました|承知|了解|大丈夫|平気|問題ありませ|問題ない|構いませ|かまいませ|お願いし|いいです|いいよ|良いです|結構ですよ|それで|オッケー|オーケー|ＯＫ|OK|どうぞ|お聞きし|聞いてみ|やってみ)/i;
+  var NO = /(いいえ|いえいえ|いや|結構です(?!よ)|けっこうです|いりません|要りません|必要ありませ|必要ない|不要|遠慮|間に合って|やめ|やらない|やりません|しません|やめておき|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|見送|お断り|断りし|だめ|ダメ|駄目)/;
+  var ASK_PURPOSE = /(ご用件|用件|ご用|どういった|どういう|どのような|どんな|なんの|何の|なんでしょ|どちら様|どちらさま|どなた|失礼ですが|どこの|お名前|会社名|目的|なにか|何か)(です|でしょ|ですか|ますか|かしら)?/;
+  var TRANSFER = /(お待ち|少々|少し待|代わり|かわり|変わり|繋ぎ|つなぎ|お繋ぎ|呼んで|呼びま|確認しま|担当に|本人に|代表に|社長に|今呼び|まいります)/;
+  var REFUSE_SALES = /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
+  var SCHEDULE_NG = /(都合が悪|都合つか|都合がつか|予定が入って|埋まって|ふさがって|塞がって|空いて(ない|いない|ませ)|厳しい|難しい|無理です|無理かな|出張(で|が|に)|休みで|定休|別の日|他の日|ほかの日|再来週|変更|ずらし|遅らせ|もう少し先)/;
+  var SCHEDULE_OK = /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解)/;
+  var TIME_SLOT = /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
   var EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
   var PHONE_RE = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
-  var COUNT_RE = /(\d+)\s*(名|人)/;
+  var COUNT_RE = /(\d+|[〇一二三四五六七八九十]{1,4})\s*(名|人)/;
   var AGE_RE = /(\d{1,3})\s*(歳|才)|(?:今年で|年齢は)\s*(\d{1,3})/;
-  var MONTH_RE = /(\d{1,2})\s*月/;
+  var MONTH_RE = /(\d{1,2}|[一二三四五六七八九十]{1,3})\s*月/;
+  var OFFICER_COUNT = /(?:役員|取締役|重役|代表者)[^。、]{0,12}?(\d{1,3}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
+  var OFFICER_COUNT_REV = /(\d{1,3}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)[^。、]{0,8}?(?:役員|取締役|重役)/;
+  var INSURED_COUNT = /(?:社会保険|社保|厚生年金|健康保険|従業員|社員|スタッフ|正社員|加入)[^。、]{0,12}?(\d{1,3}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
+  var INSURED_COUNT_REV = /(\d{1,3}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)[^。、]{0,10}?(?:社会保険|社保|厚生年金|加入|従業員|社員)/;
+  var FISCAL_MONTH = /(?:決算|期末|決算期)[^。、]{0,8}?(\d{1,2}|[一二三四五六七八九十]{1,3})\s*月/;
+  var FISCAL_MONTH_REV = /(\d{1,2}|[一二三四五六七八九十]{1,3})\s*月\s*(?:が|の|で)?\s*(?:決算|締め)/;
+  var SELF_AGE = /(?:私|自分|わたし|わたくし|当方|年齢|今年で|歳は)[^。、]{0,8}?(\d{1,3}|[一二三四五六七八九十]{1,3})\s*(?:歳|才|になり)/;
+  var KANJI_DIGITS = "\u3007\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D";
+  function toNumber(raw) {
+    const s = raw.trim();
+    if (/^\d+$/.test(s)) return Number(s);
+    if (!/^[〇一二三四五六七八九十]+$/.test(s)) return null;
+    if (!s.includes("\u5341")) {
+      let n = 0;
+      for (const ch of s) {
+        const d = KANJI_DIGITS.indexOf(ch);
+        if (d < 0) return null;
+        n = n * 10 + d;
+      }
+      return n;
+    }
+    const [tensPart = "", onesPart = ""] = s.split("\u5341");
+    const tens = tensPart === "" ? 1 : KANJI_DIGITS.indexOf(tensPart);
+    const ones = onesPart === "" ? 0 : KANJI_DIGITS.indexOf(onesPart);
+    if (tens < 0 || ones < 0) return null;
+    return tens * 10 + ones;
+  }
+  function firstNumber(text, patterns) {
+    for (const p of patterns) {
+      const m = p.exec(text);
+      const n = m?.[1] ? toNumber(m[1]) : null;
+      if (n !== null && n > 0) return n;
+    }
+    return null;
+  }
+  function bulkExtract(text) {
+    const facts = {};
+    const officers = firstNumber(text, [OFFICER_COUNT, OFFICER_COUNT_REV]);
+    const insured = firstNumber(text, [INSURED_COUNT, INSURED_COUNT_REV]);
+    const month = firstNumber(text, [FISCAL_MONTH, FISCAL_MONTH_REV]);
+    const age = firstNumber(text, [SELF_AGE]);
+    if (officers !== null) facts.officers = officers;
+    if (insured !== null) facts.insured = insured;
+    if (month !== null && month >= 1 && month <= 12) facts.fiscalMonth = month;
+    if (age !== null && age >= 18 && age <= 99) facts.age = age;
+    return facts;
+  }
   var DialogEngine = class {
     constructor(state2) {
       this.state = state2;
     }
     state;
     pending = null;
+    /** 直前の発話で一括抽出できた項目（画面に「まとめ聞きで取得」と出すため） */
+    harvested = [];
+    /** 再生済みの録音。同じ録音を1通話で二度流さない（P2/P3 等は1本に収録されている） */
+    playedAudio = /* @__PURE__ */ new Set();
     /** 架電開始の第一声。 */
     greeting() {
-      return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", [], "\u67B6\u96FB\u958B\u59CB");
+      return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", [], "\u67B6\u96FB\u958B\u59CB", PHASE_AUDIO.P0);
     }
     /** 相手の発話を受けて応答を1つ返す。state は破壊的に更新される。 */
     respond(customerText) {
@@ -1039,6 +1178,7 @@
       for (const g2 of fired) {
         if (!this.state.firedGuardrails.includes(g2)) this.state.firedGuardrails.push(g2);
       }
+      this.harvested = this.harvest(text);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
       switch (this.state.phase) {
@@ -1051,7 +1191,7 @@
         case "P3":
           return this.p3(text, fired);
         case "P4":
-          return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u5F8C \u2192 \u4F4E\u30CF\u30FC\u30C9\u30EB\u6253\u8A3A");
+          return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u5F8C \u2192 \u4F4E\u30CF\u30FC\u30C9\u30EB\u6253\u8A3A", PHASE_AUDIO.P5);
         case "P5":
           return this.p5(text, fired);
         case "P6":
@@ -1066,6 +1206,27 @@
           return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002", "END", fired, "\u7D42\u8A71");
       }
     }
+    /**
+     * 発話から人数・決算月・年齢を拾って state に入れる。
+     * すでに取得済みの項目は上書きしない（取りこぼし防止と同じ方針）。
+     * 戻り値は「今回新しく埋まった項目」。
+     */
+    harvest(text) {
+      const b = bulkExtract(text);
+      const facts = {};
+      const filled = [];
+      const put = (id, value) => {
+        if (this.state.hearing[id]) return;
+        facts[id] = value;
+        filled.push(id);
+      };
+      if (b.officers !== void 0) put("H4", `${b.officers}\u540D\uFF08${text}\uFF09`);
+      if (b.insured !== void 0) put("H5", `${b.insured}\u540D`);
+      if (b.fiscalMonth !== void 0) put("H7", `${b.fiscalMonth}\u6708`);
+      if (b.age !== void 0) put("H3", `${b.age}\u6B73`);
+      if (filled.length > 0) applyExtracted(this.state, facts);
+      return filled;
+    }
     // ---------- ガードレール優先の分岐（設計書 §5） ----------
     byGuardrail(text, fired) {
       const has = (id) => fired.includes(id);
@@ -1074,7 +1235,8 @@
           "\u7D1B\u3089\u308F\u3057\u304F\u3066\u7533\u3057\u8A33\u3054\u3056\u3044\u307E\u305B\u3093\u3002\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
           this.state.phase,
           fired,
-          "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63"
+          "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63",
+          GUARDRAIL_AUDIO.R5
         );
       }
       if (has("R7")) {
@@ -1082,7 +1244,8 @@
           "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u4EE3\u8868\u306E\u65B9\u306F\u3044\u3064\u9803\u304A\u623B\u308A\u3067\u3057\u3087\u3046\u304B\u3002\u304A\u7E4B\u304E\u3044\u305F\u3060\u304D\u3084\u3059\u3044\u6642\u9593\u5E2F\u3060\u3051\u6559\u3048\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002",
           this.state.phase,
           fired,
-          "R7: \u30D2\u30A2\u30EA\u30F3\u30B0\u3092\u6B62\u3081\u3066\u6B21\u56DE\u63A5\u89E6\u6761\u4EF6\u306E\u78BA\u5B9A\u3078"
+          "R7: \u30D2\u30A2\u30EA\u30F3\u30B0\u3092\u6B62\u3081\u3066\u6B21\u56DE\u63A5\u89E6\u6761\u4EF6\u306E\u78BA\u5B9A\u3078",
+          GUARDRAIL_AUDIO.R7
         );
       }
       if (has("R1")) {
@@ -1090,7 +1253,8 @@
           "\u305D\u3046\u306A\u306E\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u3053\u308C\u304B\u3089\u4F5C\u3089\u308C\u308B\u524D\u63D0\u3067\u3001\u5F79\u54E1\u69D81\u540D\u304B\u3089\u3067\u3082\u3054\u5C0E\u5165\u3044\u305F\u3060\u3051\u307E\u3059\u3002" + PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
           "P3",
           fired,
-          "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u5DEE\u5225\u5316(P3)\u3078"
+          "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u5DEE\u5225\u5316(P3)\u3078",
+          GUARDRAIL_AUDIO.R1
         );
       }
       if (has("R3")) {
@@ -1098,7 +1262,8 @@
           "\u3055\u3059\u304C\u3067\u3059\u306D\u3002\u5148\u751F\u306B\u3054\u76F8\u8AC7\u3044\u305F\u3060\u304F\u305F\u3081\u306E\u5224\u65AD\u6750\u6599\u3092\u304A\u6E21\u3057\u3059\u308B\u3068\u3053\u308D\u307E\u3067\u304C\u79C1\u3069\u3082\u306E\u62C5\u5F53\u3067\u3059\u306E\u3067\u3001\u305D\u306E\u6750\u6599\u3060\u3051\u304A\u6301\u3061\u3067\u304D\u308C\u3070\u3068\u601D\u3063\u3066\u304A\u308A\u307E\u3059\u3002",
           this.state.phase,
           fired,
-          "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u5224\u65AD\u6750\u6599\u306E\u63D0\u4F9B\u306B\u56DE\u308B"
+          "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u5224\u65AD\u6750\u6599\u306E\u63D0\u4F9B\u306B\u56DE\u308B",
+          GUARDRAIL_AUDIO.R3
         );
       }
       if (has("R4")) {
@@ -1106,7 +1271,8 @@
           "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u8CC7\u6599\u306F\u30E1\u30FC\u30EB\u30FBSMS\u30FB\u90F5\u9001\u306E\u3044\u305A\u308C\u304C\u3088\u308D\u3057\u3044\u3067\u3057\u3087\u3046\u304B\u3002\u304A\u9001\u308A\u3057\u305F\u3046\u3048\u3067\u3001\u6539\u3081\u3066\u3054\u611F\u60F3\u3060\u3051\u4F3A\u3046\u304A\u96FB\u8A71\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u6765\u9031\u3067\u3057\u305F\u3089\u524D\u534A\u3068\u5F8C\u534A\u3069\u3061\u3089\u304C\u3054\u90FD\u5408\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F",
           this.state.phase,
           fired,
-          "R4: \u9001\u4ED8\u624B\u6BB5\u306E\u9078\u629E\uFF0B\u518D\u67B6\u96FB\u65E5\u306E\u78BA\u5B9A\u3092\u30BB\u30C3\u30C8\u3067"
+          "R4: \u9001\u4ED8\u624B\u6BB5\u306E\u9078\u629E\uFF0B\u518D\u67B6\u96FB\u65E5\u306E\u78BA\u5B9A\u3092\u30BB\u30C3\u30C8\u3067",
+          GUARDRAIL_AUDIO.R4
         );
       }
       if (has("R2")) {
@@ -1115,7 +1281,8 @@
           "\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u304A\u6642\u9593\u306F\u53D6\u3089\u305B\u307E\u305B\u3093\u3002" + PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
           target,
           fired,
-          "R2: \u8AAC\u660E\u3092\u88AB\u305B\u305A\u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA\u3078"
+          "R2: \u8AAC\u660E\u3092\u88AB\u305B\u305A\u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA\u3078",
+          GUARDRAIL_AUDIO.R2
         );
       }
       return null;
@@ -1123,7 +1290,7 @@
     // ---------- フェーズ別の意図判定 ----------
     p0(text, fired) {
       if (REFUSE_SALES.test(text)) {
-        return this.reply(PHASES.P0X.mustSay.join(" "), "P0X", fired, "\u53D7\u4ED8\u30D6\u30ED\u30C3\u30AF \u2192 \u75D5\u8DE1\u3092\u6B8B\u3057\u3066\u64A4\u9000");
+        return this.reply(PHASES.P0X.mustSay.join(" "), "P0X", fired, "\u53D7\u4ED8\u30D6\u30ED\u30C3\u30AF \u2192 \u75D5\u8DE1\u3092\u6B8B\u3057\u3066\u64A4\u9000", PHASE_AUDIO.P0X);
       }
       if (TRANSFER.test(text)) {
         return this.reply(
@@ -1143,14 +1310,21 @@
         (t) => t.speaker === "agent" && /突然のお電話/.test(t.text)
       );
       if (!introduced) {
-        return this.reply(PHASES.P1.mustSay.join(" "), "P1", fired, "\u4EE3\u8868\u63A5\u7D9A \u2192 \u540D\u4E57\u308A\uFF0B\u7ACB\u5834\u306E\u5207\u308A\u5206\u3051\uFF0B\u5DFB\u304D\u8FBC\u307F\u8CEA\u554F");
+        return this.reply(
+          PHASES.P1.mustSay.join(" "),
+          "P1",
+          fired,
+          "\u4EE3\u8868\u63A5\u7D9A \u2192 \u540D\u4E57\u308A\uFF0B\u7ACB\u5834\u306E\u5207\u308A\u5206\u3051\uFF0B\u5DFB\u304D\u8FBC\u307F\u8CEA\u554F",
+          PHASE_AUDIO.P1
+        );
       }
       const ack = /保険/.test(text) ? "\u4FDD\u967A\u3067\u3054\u6E96\u5099\u3055\u308C\u3066\u3044\u308B\u3093\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002" : /中退共/.test(text) ? "\u4E2D\u9000\u5171\u306B\u3054\u52A0\u5165\u306A\u3093\u3067\u3059\u306D\u3001\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002" : "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002";
       return this.reply(
         `${ack}\u3061\u306A\u307F\u306B\u305D\u3061\u3089\u306F\u3001${DEMO_SCENARIO.contactName}\u69D8\u3054\u81EA\u8EAB\u306E\u9000\u8077\u91D1\u306E\u3054\u6E96\u5099\u3068\u3057\u3066\u3082\u5341\u5206\u306B\u6D3B\u7528\u3067\u304D\u3066\u3044\u3089\u3063\u3057\u3083\u3044\u307E\u3059\u304B\uFF1F`,
         "P2",
         fired,
-        "\u53D7\u3051\u6B62\u3081 \u2192 \u5145\u8DB3\u5EA6\u8CEA\u554F\uFF08\u300C\u3042\u308B\u304B\u300D\u3067\u306F\u306A\u304F\u300C\u8DB3\u308A\u3066\u3044\u308B\u304B\u300D\uFF09"
+        "\u53D7\u3051\u6B62\u3081 \u2192 \u5145\u8DB3\u5EA6\u8CEA\u554F\uFF08\u300C\u3042\u308B\u304B\u300D\u3067\u306F\u306A\u304F\u300C\u8DB3\u308A\u3066\u3044\u308B\u304B\u300D\uFF09",
+        PHASE_AUDIO.P2
       );
     }
     p2(text, fired) {
@@ -1158,7 +1332,8 @@
         PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
         "P3",
         fired,
-        "\u73FE\u72B6\u306E\u4E0D\u8DB3\u30FB\u4E0D\u660E\u3092\u78BA\u8A8D \u2192 \u5DEE\u5225\u5316(P3)"
+        "\u73FE\u72B6\u306E\u4E0D\u8DB3\u30FB\u4E0D\u660E\u3092\u78BA\u8A8D \u2192 \u5DEE\u5225\u5316(P3)",
+        PHASE_AUDIO.P3
       );
     }
     p3(text, fired) {
@@ -1179,30 +1354,44 @@
         );
       }
       if (this.state.lawChangeHookUsed) {
-        return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u306F\u4F7F\u7528\u6E08\u307F \u2192 P5 \u3078");
+        return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u306F\u4F7F\u7528\u6E08\u307F \u2192 P5 \u3078", PHASE_AUDIO.P5);
       }
-      return this.reply(PHASES.P4.mustSay.join(" "), "P4", fired, "\u5DEE\u5225\u5316\u3092\u7406\u89E3 \u2192 \u6CD5\u6539\u6B63\u30D5\u30C3\u30AF(1\u56DE\u306E\u307F)");
+      return this.reply(PHASES.P4.mustSay.join(" "), "P4", fired, "\u5DEE\u5225\u5316\u3092\u7406\u89E3 \u2192 \u6CD5\u6539\u6B63\u30D5\u30C3\u30AF(1\u56DE\u306E\u307F)", PHASE_AUDIO.P4);
     }
     p5(text, fired) {
-      if (YES.test(text) && !NO.test(text)) {
-        return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u5373OK \u2192 \u65E5\u7A0B2\u629E\u30AF\u30ED\u30FC\u30BA");
+      if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
+        return this.reply(
+          "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F",
+          "P7",
+          fired,
+          "\u5373OK \u2192 \u65E5\u7A0B2\u629E\u30AF\u30ED\u30FC\u30BA",
+          PHASE_AUDIO.P7
+        );
       }
       return this.reply(
         PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
         "P6",
         fired,
-        "\u4FDD\u7559\u30FB\u8981\u76F8\u8AC7 \u2192 \u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA"
+        "\u4FDD\u7559\u30FB\u8981\u76F8\u8AC7 \u2192 \u4EEE\u62BC\u3055\u3048\u30AF\u30ED\u30FC\u30BA",
+        PHASE_AUDIO.P6
       );
     }
     p6(text, fired) {
-      if (YES.test(text) && !NO.test(text)) {
-        return this.reply("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u4EEE\u62BC\u3055\u3048\u540C\u610F \u2192 \u65E5\u7A0B2\u629E");
+      if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
+        return this.reply(
+          "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F",
+          "P7",
+          fired,
+          "\u4EEE\u62BC\u3055\u3048\u540C\u610F \u2192 \u65E5\u7A0B2\u629E",
+          PHASE_AUDIO.P7
+        );
       }
       return this.reply(
         "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u672C\u65E5\u4E2D\u3067\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u308B\u9803\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u304B\uFF1F",
         "P6",
         fired,
-        "\u518D\u67B6\u96FB\u306E\u7D04\u675F\u306B\u5207\u308A\u66FF\u3048"
+        "\u518D\u67B6\u96FB\u306E\u7D04\u675F\u306B\u5207\u308A\u66FF\u3048",
+        PHASE_AUDIO.P6
       );
     }
     p7(text, fired) {
@@ -1217,8 +1406,16 @@
       if (/(遠い|距離|来られ|お越し)/.test(text)) {
         return this.reply("\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u79FB\u52D5\u306F\u4E0D\u8981\u3067\u3059\u3002", "P7", fired, "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u306A\u306E\u3067\u79FB\u52D5\u4E0D\u8981");
       }
+      if (SCHEDULE_NG.test(text) && !TIME_SLOT.test(text)) {
+        return this.reply(
+          "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u518D\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u524D\u534A\u3068\u5F8C\u534A\u306E\u3069\u3061\u3089\u304C\u3054\u90FD\u5408\u3088\u308D\u3057\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F",
+          "P7",
+          fired,
+          "\u65E5\u7A0BNG \u2192 \u5225\u9031\u306E2\u629E\u3067\u51FA\u3057\u76F4\u3059"
+        );
+      }
       const sc = DEMO_SCENARIO;
-      if (/(午前|午後|朝|夕方)/.test(text)) {
+      if (TIME_SLOT.test(text)) {
         return this.reply(
           `\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u3067\u306F${sc.proposedDate}${sc.proposedTime}\u304B\u3089${sc.meetingMinutes}\u5206\u3067\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F`,
           "P7",
@@ -1226,7 +1423,7 @@
           "2\u629E\u306E\u56DE\u7B54 \u2192 1\u70B9\u306B\u78BA\u5B9A\u3055\u305B\u308B"
         );
       }
-      if (YES.test(text) && !NO.test(text)) {
+      if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
         applyExtracted(this.state, {
           appointment_date: sc.proposedDate,
           appointment_time: sc.proposedTime,
@@ -1238,21 +1435,29 @@
           PHASES.P8.mustSay[0]?.replace(/^（[^）]*）/, "") ?? "",
           "P8",
           fired,
-          "\u65E5\u6642\u78BA\u5B9A \u2192 \u30D2\u30A2\u30EA\u30F3\u30B0\u306E\u8A31\u53EF\u53D6\u5F97(P8)"
+          "\u65E5\u6642\u78BA\u5B9A \u2192 \u30D2\u30A2\u30EA\u30F3\u30B0\u306E\u8A31\u53EF\u53D6\u5F97(P8)",
+          PHASE_AUDIO.P8
         );
       }
       return this.reply("\u6765\u9031\u3067\u3057\u305F\u3089\u3001\u5348\u524D\u3068\u5348\u5F8C\u3069\u3061\u3089\u304C\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F", "P7", fired, "\u958B\u3044\u305F\u8CEA\u554F\u306F\u4F7F\u308F\u305A2\u629E\u3067\u805E\u304D\u76F4\u3059");
     }
     // ---------- P8: ヒアリング7項目 ----------
     p8(text, fired) {
-      let note = "";
+      const notes = [];
+      if (this.harvested.length > 0) {
+        notes.push(`\u307E\u3068\u3081\u805E\u304D\u3067 ${this.harvested.join("\u30FB")} \u3092\u540C\u6642\u53D6\u5F97`);
+      }
       if (this.pending) {
-        const { facts, ok } = this.extract(this.pending, text);
-        if (ok) {
-          applyExtracted(this.state, facts);
-          note = `${this.pending} \u3092\u53D6\u5F97`;
+        if (this.isFilled(this.pending)) {
+          notes.push(`${this.pending} \u306F\u56DE\u7B54\u6E08\u307F\u306E\u305F\u3081\u8CEA\u554F\u3092\u30B9\u30AD\u30C3\u30D7`);
         } else {
-          return this.reply(this.askText(this.pending), "P8", fired, `${this.pending} \u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`);
+          const { facts, ok } = this.extract(this.pending, text);
+          if (ok) {
+            applyExtracted(this.state, facts);
+            notes.push(`${this.pending} \u3092\u53D6\u5F97`);
+          } else {
+            return this.reply(this.askText(this.pending), "P8", fired, `${this.pending} \u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`);
+          }
         }
       }
       const nextSlot = this.nextSlot();
@@ -1262,11 +1467,32 @@
           PHASES.P9.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
           "P9",
           fired,
-          `${note || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 7\u9805\u76EE\uFF0B\u9023\u7D61\u5148\u304C\u63C3\u3063\u305F\u306E\u3067\u7DE0\u3081(P9)`
+          `${notes.join(" / ") || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 7\u9805\u76EE\uFF0B\u9023\u7D61\u5148\u304C\u63C3\u3063\u305F\u306E\u3067\u7DE0\u3081(P9)`,
+          PHASE_AUDIO.P9
         );
       }
       this.pending = nextSlot;
-      return this.reply(this.askText(nextSlot), "P8", fired, `${note ? note + " \u2192 " : ""}\u6B21\u306F ${nextSlot}`);
+      return this.reply(
+        this.askText(nextSlot),
+        "P8",
+        fired,
+        `${notes.length > 0 ? notes.join(" / ") + " \u2192 " : ""}\u6B21\u306F ${nextSlot}`
+      );
+    }
+    /** そのスロットがすでに埋まっているか。 */
+    isFilled(slot) {
+      switch (slot) {
+        case "email":
+          return Boolean(this.state.email);
+        case "emailConfirm":
+          return this.state.emailConfirmed;
+        case "callbackPhone":
+          return Boolean(this.state.callbackPhone);
+        case "callbackWindow":
+          return Boolean(this.state.callbackWindow);
+        default:
+          return Boolean(this.state.hearing[slot]);
+      }
     }
     nextSlot() {
       const h = missingHearing(this.state)[0];
@@ -1294,9 +1520,17 @@
     /** 「今どの項目を聞いているか」が分かっているので、その文脈で回答を解釈する。 */
     extract(slot, text) {
       const num = COUNT_RE.exec(text)?.[1];
+      const count = num ? toNumber(num) : null;
       switch (slot) {
         case "H1":
-          return { facts: { H1: /(ない|いない|してません|していません|特に)/.test(text) ? "iDeCo\u30FB\u6295\u8CC7\u3068\u3082\u306B\u306A\u3057" : text }, ok: true };
+          return {
+            facts: {
+              H1: /(やって(い)?ませ|して(い)?ませ|入って(い)?ませ|やってな|してな|入ってな|ない|いない|特に|無し|なし|未加入|ありませ|ございませ)/.test(
+                text
+              ) ? "iDeCo\u30FB\u6295\u8CC7\u3068\u3082\u306B\u306A\u3057" : text
+            },
+            ok: true
+          };
         case "H2":
           return { facts: { H2: text }, ok: true };
         case "H3": {
@@ -1305,17 +1539,20 @@
           return { facts: { H3: age ? `${age}\u6B73` : text }, ok: Boolean(age) };
         }
         case "H4":
-          return { facts: { H4: num ? `${num}\u540D\uFF08${text}\uFF09` : text }, ok: Boolean(num) };
+          return { facts: { H4: count !== null ? `${count}\u540D\uFF08${text}\uFF09` : text }, ok: count !== null };
         case "H5":
-          return { facts: { H5: num ? `${num}\u540D` : text }, ok: Boolean(num) };
+          return { facts: { H5: count !== null ? `${count}\u540D` : text }, ok: count !== null };
         case "H6":
           return {
-            facts: { H6: /(私|自分|はい|そうです|決められ)/.test(text) ? "\u4EE3\u8868\u306E\u5224\u65AD\u3067\u6C7A\u88C1\u53EF\u80FD" : text },
+            facts: {
+              H6: /(私|自分|わたし|一人で|独断|即決|はい|そうです|決められ|決めて|決裁|判断でき)/.test(text) ? "\u4EE3\u8868\u306E\u5224\u65AD\u3067\u6C7A\u88C1\u53EF\u80FD" : text
+            },
             ok: true
           };
         case "H7": {
           const m = MONTH_RE.exec(text);
-          return { facts: { H7: m ? `${m[1]}\u6708` : text }, ok: Boolean(m) };
+          const month = m?.[1] ? toNumber(m[1]) : null;
+          return { facts: { H7: month !== null ? `${month}\u6708` : text }, ok: month !== null };
         }
         case "email": {
           const m = EMAIL_RE.exec(text.replace(/\s/g, ""));
@@ -1332,7 +1569,7 @@
       }
     }
     // ---------- 応答の確定（フィルタ・遷移検証・履歴） ----------
-    reply(raw, proposed, fired, matched) {
+    reply(raw, proposed, fired, matched, audio) {
       const fixed = autoFix(raw);
       const blocked = checkForbidden(raw).filter((v) => v.fixable);
       const utterance = fixed.text;
@@ -1342,6 +1579,11 @@
       });
       const forbidEnd = Object.keys(GUARDRAILS).filter((id) => GUARDRAILS[id].forbidEnd);
       const t = resolveTransition(this.state, proposed, fired, forbidEnd);
+      let audioFile;
+      if (audio && !this.playedAudio.has(audio)) {
+        this.playedAudio.add(audio);
+        audioFile = audioUrl(audio);
+      }
       this.state.turns.push({
         index: this.state.turns.length,
         speaker: "agent",
@@ -1359,7 +1601,8 @@
         guardrails: fired,
         matched,
         overrideReason: t.overrideReason,
-        blocked
+        blocked,
+        audioFile
       };
     }
     /** 相手の発話を履歴に積む（画面側から呼ぶ）。 */
@@ -1557,6 +1800,15 @@
     if (!voiceOn()) return Promise.resolve();
     return speakUtterance(text, { voice: selectedVoice(), rate: 1, gapMs: 240 });
   }
+  async function speakReply(text, audioFile) {
+    if (!voiceOn()) return;
+    if (audioFile && await playAudioFile(audioFile)) return;
+    await speak(text);
+  }
+  function stopVoice() {
+    window.speechSynthesis?.cancel();
+    stopAudio();
+  }
   var pause = (ms) => new Promise((r) => window.setTimeout(r, ms));
   var lastPhase = null;
   function setMicNote(text, isError = false) {
@@ -1608,12 +1860,13 @@
         lastPhase = r.phase;
       }
       const node = pushMessage("ai", "AI", r.utterance);
-      const why = el("div", "flag", `\u5224\u5B9A: ${r.matched}`);
+      const source = r.audioFile ? `\u9332\u97F3 ${r.audioFile.split("/").pop()}` : "\u97F3\u58F0\u5408\u6210";
+      const why = el("div", "flag", `\u5224\u5B9A: ${r.matched} \uFF0F \u97F3\u6E90: ${source}`);
       transcript().append(why);
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
-      await speak(r.utterance);
+      await speakReply(r.utterance, r.audioFile);
       node.classList.remove("speaking");
       renderAll();
     } finally {
@@ -1627,7 +1880,7 @@
       mic.stop();
       return;
     }
-    window.speechSynthesis?.cancel();
+    stopVoice();
     setMicNote("\u304A\u8A71\u3057\u304F\u3060\u3055\u3044\u2026");
     btn.classList.add("on");
     btn.textContent = "\u25A0 \u8A71\u3057\u7D42\u308F\u308A";
@@ -1680,7 +1933,7 @@
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
-      await speak(r.utterance);
+      await speakReply(r.utterance, r.audioFile);
       node.classList.remove("speaking");
     } finally {
       busy = false;
@@ -1749,7 +2002,7 @@
   function togglePlay() {
     if (playing) {
       stopPlay();
-      window.speechSynthesis?.cancel();
+      stopVoice();
       return;
     }
     playing = true;
@@ -1758,7 +2011,7 @@
   }
   function reset() {
     stopPlay();
-    window.speechSynthesis?.cancel();
+    stopVoice();
     busy = false;
     mic.abort();
     clearInterim();
@@ -1777,7 +2030,7 @@
   renderAll();
   $("next").addEventListener("click", () => {
     stopPlay();
-    window.speechSynthesis?.cancel();
+    stopVoice();
     void step();
   });
   $("play").addEventListener("click", togglePlay);
@@ -1787,7 +2040,7 @@
     transcript().lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
   });
   $("voice").addEventListener("change", () => {
-    if (!voiceOn()) window.speechSynthesis?.cancel();
+    if (!voiceOn()) stopVoice();
   });
   $("mic").addEventListener("click", toggleMic);
   $("mode").addEventListener("change", applyMode);
