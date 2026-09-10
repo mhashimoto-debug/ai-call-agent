@@ -336,6 +336,25 @@ const PERSON_PHRASES: [RegExp, number][] = [
 const EMAIL_UNAVAILABLE =
   /(メール|アドレス)[^。]{0,12}(苦手|使って(ない|いない|おりませ|ません)|持って(ない|いない|おりませ)|見ない|分からない|わからない|やってない)/;
 
+/**
+ * 「この番号でいいです」「今かけてもらってる番号です」型の、発信先の番号を連絡先に指定する回答。
+ * 番号そのものが出てこないので、電話番号の抽出では拾えない。
+ */
+const CURRENT_NUMBER =
+  /(この|こちらの|こっちの|今の|いまの)\s*(番号|電話|携帯|ケータイ)|(今|いま)\s*(お)?(かけ|掛け)て(もらって|いただいて|頂いて|られて|くれて)?(る|い)|(今|いま)\s*(かかって|掛かって)(る|い|き)|(発信|着信)\s*(元|の)?\s*(番号|電話)|表示\s*(されて(る|いる)|の)\s*(番号|電話)/;
+
+/** 「この番号じゃなくて」「この電話はつながりにくい」のように、発信先の番号を断っている言い方。 */
+const CURRENT_NUMBER_REFUSED =
+  /(じゃなく|ではなく|でなく|じゃない|ではない|以外|は(だめ|ダメ|駄目|困|使え|繋が|つなが))/;
+
+/** 発信先の番号を連絡先に指定されたか。 */
+export function isCurrentNumber(text: string): boolean {
+  return CURRENT_NUMBER.test(text) && !CURRENT_NUMBER_REFUSED.test(text);
+}
+
+/** 発信先の番号を使う場合に、連絡先欄へ入れる表記。 */
+export const CURRENT_NUMBER_LABEL = "発信番号（今お電話している番号）";
+
 /** 時間帯の指定。2択に答えたとみなす。 */
 const TIME_SLOT =
   /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
@@ -562,6 +581,10 @@ export class DialogEngine {
       }
     }
 
+    // 連絡先を聞いた直後の「この番号でいいです」は、番号が無くても回答として確定させる。
+    // 「折り返して」「かけ直して」は多忙(R2)の言い回しにも当たるので、ガードレールより先に見る
+    if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
+
     const g = this.byGuardrail(text, fired);
     if (g) return g;
 
@@ -774,7 +797,10 @@ export class DialogEngine {
     }
     // R2: 忙しい相手には要点だけを短く伝え、人数確認まで一気に運ぶ。
     // ただし再生は1通話1回だけ（2回目以降は afterBusy で質問側へ進める）
-    if (has("R2") && !this.busyPitchDone) {
+    // P8 で前日の連絡先・時間帯を聞いている場面の「折り返し」「かけ直し」は多忙ではなく回答
+    const answeringCallback =
+      this.state.phase === "P8" && (this.pending === "callbackPhone" || this.pending === "callbackWindow");
+    if (has("R2") && !this.busyPitchDone && !answeringCallback) {
       this.unknownStreak = 0;
       this.refusalStreak++;
       // すでに一度断られていれば、多忙で食い下がらずに終話する
@@ -984,7 +1010,15 @@ export class DialogEngine {
       }
     }
     this.unknownStreak = 0;
+    return this.advanceP8(notes, fired);
+  }
 
+  /**
+   * P8 で次に聞く項目へ進める。全部揃っていればカレンダー登録依頼 → 締め(P9)。
+   * lead は次の質問の前に添える一言（「こちらの番号宛にご連絡します」など）。
+   * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
+   */
+  private advanceP8(notes: string[], fired: GuardrailId[], lead = ""): DialogReply {
     const nextSlot = this.nextSlot();
     if (!nextSlot) {
       this.pending = null;
@@ -994,7 +1028,7 @@ export class DialogEngine {
       if (!this.state.calendarRequested) {
         const sc = DEMO_SCENARIO;
         return this.speakOnly(
-          `担当の予定の兼ね合いで、もし日程変更になりますと次回のご案内がかなり先になる可能性がございます。お手数ですが${sc.proposedDate}${sc.proposedTime}で、一旦カレンダーにご予定だけ入れておいていただけますと助かります。`,
+          `${lead}担当の予定の兼ね合いで、もし日程変更になりますと次回のご案内がかなり先になる可能性がございます。お手数ですが${sc.proposedDate}${sc.proposedTime}で、一旦カレンダーにご予定だけ入れておいていただけますと助かります。`,
           "P8",
           fired,
           `${notes.join(" / ") || "取得完了"} → カレンダー登録依頼（録音なし・音声合成）`,
@@ -1010,11 +1044,42 @@ export class DialogEngine {
     this.pending = nextSlot;
     // 収録台本に無い項目は音声合成で補う（画面にもそう出す）
     return this.speakOnly(
-      this.askText(nextSlot),
+      `${lead}${this.askText(nextSlot)}`,
       "P8",
       fired,
       `${notes.length > 0 ? notes.join(" / ") + " → " : ""}次は ${nextSlot}（録音なし・音声合成）`,
     );
+  }
+
+  /** 折り返し先の電話番号を聞いている場面か（P8 の連絡先確認・不在時の折り返し先確認）。 */
+  private askingPhone(): boolean {
+    if (this.state.callbackPhone || this.state.ended) return false;
+    return (this.state.phase === "P8" && this.pending === "callbackPhone") || this.absentMode;
+  }
+
+  /**
+   * 「この番号でいいです」を受けて、発信先の番号を連絡先として確定する。
+   * 聞き直しはせず、メールアドレスが未取得ならそれを、取得済みなら残りの確認事項へ進む。
+   */
+  private acceptCurrentNumber(text: string, fired: GuardrailId[]): DialogReply {
+    applyExtracted(this.state, { callback_phone: CURRENT_NUMBER_LABEL, is_current_number: true });
+    this.unknownStreak = 0;
+    this.expecting = null;
+    // 不在対応中は、戻り時間の確認と折り返しの約束へそのまま進める
+    if (this.absentMode) return this.absentFollowUp(text, fired);
+
+    const ack = "承知いたしました！ではこちらの番号宛にご連絡を差し上げますね。";
+    const note = "発信番号の指定 → この番号で連絡先を確定";
+    if (!this.state.email) {
+      this.pending = "email";
+      return this.speakOnly(
+        `${ack}差し支えなければ送付先のメールアドレスもお伺いできますでしょうか？`,
+        "P8",
+        fired,
+        `${note} → 送付先メールアドレスへ（録音なし・音声合成）`,
+      );
+    }
+    return this.advanceP8([note], fired, ack);
   }
 
   /** そのスロットがすでに埋まっているか。 */

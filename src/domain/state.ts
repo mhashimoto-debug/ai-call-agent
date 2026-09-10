@@ -26,6 +26,8 @@ export interface CallState {
   email: string | null;
   emailConfirmed: boolean;
   callbackPhone: string | null;
+  /** 前日確認の連絡先に、今お電話している番号（発信先の番号）を使うか */
+  isCurrentNumber: boolean;
   callbackWindow: string | null;
   appointmentDate: string | null;
   appointmentTime: string | null;
@@ -50,6 +52,7 @@ export function createCallState(): CallState {
     email: null,
     emailConfirmed: false,
     callbackPhone: null,
+    isCurrentNumber: false,
     callbackWindow: null,
     appointmentDate: null,
     appointmentTime: null,
@@ -142,6 +145,7 @@ export interface ExtractedFacts {
   email?: string | null;
   email_confirmed?: boolean;
   callback_phone?: string | null;
+  is_current_number?: boolean;
   callback_window?: string | null;
   appointment_date?: string | null;
   appointment_time?: string | null;
@@ -163,6 +167,7 @@ export function applyExtracted(state: CallState, facts: ExtractedFacts): void {
   if (facts.email?.trim()) state.email = facts.email.trim();
   if (facts.email_confirmed) state.emailConfirmed = true;
   if (facts.callback_phone?.trim()) state.callbackPhone = facts.callback_phone.trim();
+  if (facts.is_current_number) state.isCurrentNumber = true;
   if (facts.callback_window?.trim()) state.callbackWindow = facts.callback_window.trim();
   if (facts.appointment_date?.trim()) state.appointmentDate = facts.appointment_date.trim();
   if (facts.appointment_time?.trim()) state.appointmentTime = facts.appointment_time.trim();

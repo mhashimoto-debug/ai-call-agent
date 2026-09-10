@@ -10,7 +10,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DialogEngine, VOICE_LINES, AUDIO_BASE, type DialogReply } from "./dialogEngine.js";
+import {
+  CURRENT_NUMBER_LABEL,
+  DialogEngine,
+  VOICE_LINES,
+  AUDIO_BASE,
+  type DialogReply,
+} from "./dialogEngine.js";
 import { TransferEngine, type TransferReply } from "./transferEngine.js";
 import { createCallState, type CallState } from "../domain/state.js";
 import { evaluateDod } from "../domain/dod.js";
@@ -284,6 +290,124 @@ test("デモA 断り: 受付の営業電話ブロックは食い下がらず撤�
   assert.equal(r.utterance, VOICE_LINES.reject.text);
   assert.equal(r.phase, "P0X");
   assert.equal(call.state.ended, true);
+});
+
+// ---------- A-8. P8 連絡先: 発信番号の指定（「この番号でいいです」） ----------
+
+/** 連絡先の確認（p8_recovery.mp3）まで進めた通話。 */
+function callAtContact(opts: { withEmail: boolean }): CallA {
+  const call = new CallA();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  call.say("50代で、役員2名と社員18名の20人です");
+  call.say(opts.withEmail ? "決算は3月で、メールは nakamura@example.co.jp です" : "決算は3月です");
+  assert.equal(call.say("はい、その時間なら大丈夫です").utterance, VOICE_LINES.contact.text);
+  return call;
+}
+
+const CURRENT_NUMBER_ACK = "承知いたしました！ではこちらの番号宛にご連絡を差し上げますね。";
+
+const CURRENT_NUMBER_PHRASES: string[] = [
+  "この番号でいいです",
+  "今かけてもらってるこの番号です",
+  "こちらの番号で大丈夫です",
+  "この電話で大丈夫です",
+  "今かかってる番号でお願いします",
+  "この番号に折り返してください",
+  "この番号にかけ直してください",
+  "表示されてる番号でいいですよ",
+  "発信の番号で",
+];
+
+for (const text of CURRENT_NUMBER_PHRASES) {
+  test(`デモA P8 発信番号: 「${text}」→ 再質問せず、この番号で確定して次の確認へ進む`, () => {
+    const call = callAtContact({ withEmail: true });
+    const r = call.say(text);
+    assert.doesNotMatch(r.matched, /聞き取れず/, `電話番号を再催促している: ${r.matched}`);
+    assert.notEqual(r.utterance, VOICE_LINES.r2Busy.text, `多忙(R2)と取り違えている: ${r.matched}`);
+    assert.ok(r.utterance.startsWith(CURRENT_NUMBER_ACK), `受け止めの一言が無い: ${r.utterance}`);
+    assert.equal(call.state.isCurrentNumber, true);
+    assert.equal(call.state.callbackPhone, CURRENT_NUMBER_LABEL);
+    assert.equal(r.phase, "P8");
+    assertHealthyA(call, `発信番号「${text}」`);
+  });
+}
+
+test("P8で「今かけてもらってるこの番号です」と言われた場合、再質問せず発信番号確定で次へ進む", () => {
+  const call = callAtContact({ withEmail: true });
+  const r = call.say("今かけてもらってるこの番号です");
+  assert.doesNotMatch(r.matched, /callbackPhone が聞き取れず/);
+  assert.equal(call.state.isCurrentNumber, true);
+  assert.equal(call.state.callbackPhone, CURRENT_NUMBER_LABEL);
+  // メールアドレスは取得済みなので、受け止めてそのまま未取得のヒアリングへ進む
+  assert.equal(r.utterance, `${CURRENT_NUMBER_ACK}現在 iDeCo やその他の投資はされていますか？`);
+
+  // 残りの確認を済ませれば締め(P9)まで進み、DoD も満たす
+  const steps: [string, string | RegExp][] = [
+    ["いえ、特にやっていません", /退職金制度/],
+    ["特にないです", /ご判断で決められますか/],
+    ["はい、私が決めます", /復唱させていただきます/],
+    ["はい、合っています", /何時頃が繋がりやすい/],
+    ["午前中なら繋がります", /カレンダー/],
+    ["はい、入れておきます", VOICE_LINES.closing.text],
+  ];
+  for (const [text, expected] of steps) {
+    const next = call.say(text);
+    if (typeof expected === "string") assert.equal(next.utterance, expected, `「${text}」: ${next.matched}`);
+    else assert.match(next.utterance, expected, `「${text}」: ${next.matched}`);
+  }
+  assert.equal(call.state.phase, "P9");
+  assert.ok(evaluateDod(call.state).passed, "DoD を満たしていない");
+  assertHealthyA(call, "発信番号→締め");
+});
+
+test("デモA P8 発信番号: メールアドレス未取得なら、続けて送付先メールアドレスを伺う", () => {
+  const call = callAtContact({ withEmail: false });
+  const r = call.say("この番号でいいです");
+  assert.equal(
+    r.utterance,
+    `${CURRENT_NUMBER_ACK}差し支えなければ送付先のメールアドレスもお伺いできますでしょうか？`,
+  );
+  assert.equal(call.state.isCurrentNumber, true);
+
+  const next = call.say("nakamura@example.co.jp です");
+  assert.equal(call.state.email, "nakamura@example.co.jp");
+  assert.match(next.utterance, /iDeCo/, `メールアドレスの次の確認へ進んでいない: ${next.matched}`);
+  assertHealthyA(call, "発信番号→メールアドレス");
+});
+
+test("デモA P8 発信番号: 「この番号じゃなくて携帯に」は発信番号として確定しない", () => {
+  const call = callAtContact({ withEmail: true });
+  call.say("この番号じゃなくて携帯にお願いします");
+  assert.equal(call.state.isCurrentNumber, false);
+  assert.equal(call.state.callbackPhone, null);
+
+  const r = call.say("090-1234-5678 です");
+  assert.equal(call.state.callbackPhone, "090-1234-5678");
+  assert.match(r.utterance, /iDeCo/);
+});
+
+test("デモA P8: 番号に「折り返して」と添えられても多忙(R2)と取り違えない", () => {
+  const call = callAtContact({ withEmail: true });
+  const r = call.say("090-1234-5678 に折り返してください");
+  assert.notEqual(r.utterance, VOICE_LINES.r2Busy.text, `多忙(R2)と取り違えている: ${r.matched}`);
+  assert.equal(call.state.callbackPhone, "090-1234-5678");
+  assert.equal(call.state.isCurrentNumber, false);
+  assert.match(r.utterance, /iDeCo/);
+});
+
+test("デモA 不在: 「この番号に折り返してください」は発信番号で確定し、戻り時間を伺って終話する", () => {
+  const call = new CallA();
+  call.say("担当は今不在にしてます");
+  const r = call.say("この番号に折り返してください");
+  assert.notEqual(r.utterance, VOICE_LINES.r2Busy.text, `多忙(R2)と取り違えている: ${r.matched}`);
+  assert.equal(call.state.isCurrentNumber, true);
+  assert.match(r.utterance, /何時頃/);
+
+  const closed = call.say("夕方には戻ります");
+  assert.match(closed.utterance, /夕方頃に改めてお電話/);
+  assert.equal(call.state.ended, true);
+  assertHealthyA(call, "不在→発信番号");
 });
 
 // ============================================================

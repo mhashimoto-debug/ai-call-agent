@@ -452,6 +452,7 @@
       email: null,
       emailConfirmed: false,
       callbackPhone: null,
+      isCurrentNumber: false,
       callbackWindow: null,
       appointmentDate: null,
       appointmentTime: null,
@@ -513,6 +514,7 @@
     if (facts.email?.trim()) state2.email = facts.email.trim();
     if (facts.email_confirmed) state2.emailConfirmed = true;
     if (facts.callback_phone?.trim()) state2.callbackPhone = facts.callback_phone.trim();
+    if (facts.is_current_number) state2.isCurrentNumber = true;
     if (facts.callback_window?.trim()) state2.callbackWindow = facts.callback_window.trim();
     if (facts.appointment_date?.trim()) state2.appointmentDate = facts.appointment_date.trim();
     if (facts.appointment_time?.trim()) state2.appointmentTime = facts.appointment_time.trim();
@@ -1041,6 +1043,12 @@
     [/(一人|ひとり|1人)(だけ|です|ですね|でやって)/, 1]
   ];
   var EMAIL_UNAVAILABLE = /(メール|アドレス)[^。]{0,12}(苦手|使って(ない|いない|おりませ|ません)|持って(ない|いない|おりませ)|見ない|分からない|わからない|やってない)/;
+  var CURRENT_NUMBER = /(この|こちらの|こっちの|今の|いまの)\s*(番号|電話|携帯|ケータイ)|(今|いま)\s*(お)?(かけ|掛け)て(もらって|いただいて|頂いて|られて|くれて)?(る|い)|(今|いま)\s*(かかって|掛かって)(る|い|き)|(発信|着信)\s*(元|の)?\s*(番号|電話)|表示\s*(されて(る|いる)|の)\s*(番号|電話)/;
+  var CURRENT_NUMBER_REFUSED = /(じゃなく|ではなく|でなく|じゃない|ではない|以外|は(だめ|ダメ|駄目|困|使え|繋が|つなが))/;
+  function isCurrentNumber(text) {
+    return CURRENT_NUMBER.test(text) && !CURRENT_NUMBER_REFUSED.test(text);
+  }
+  var CURRENT_NUMBER_LABEL = "\u767A\u4FE1\u756A\u53F7\uFF08\u4ECA\u304A\u96FB\u8A71\u3057\u3066\u3044\u308B\u756A\u53F7\uFF09";
   var TIME_SLOT = /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
   var PUBLIC_BODY_CONFUSION = /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省|年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労働基準監督署|公務員|職員|担当官|補助金|助成金|給付金)/;
   var EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
@@ -1188,6 +1196,7 @@
           collected = "headcount";
         }
       }
+      if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
       if (collected === "headcount") {
@@ -1358,7 +1367,8 @@
         );
         if (reply) return reply;
       }
-      if (has("R2") && !this.busyPitchDone) {
+      const answeringCallback = this.state.phase === "P8" && (this.pending === "callbackPhone" || this.pending === "callbackWindow");
+      if (has("R2") && !this.busyPitchDone && !answeringCallback) {
         this.unknownStreak = 0;
         this.refusalStreak++;
         if (this.refusalStreak >= 2) {
@@ -1532,13 +1542,21 @@
         }
       }
       this.unknownStreak = 0;
+      return this.advanceP8(notes, fired);
+    }
+    /**
+     * P8 で次に聞く項目へ進める。全部揃っていればカレンダー登録依頼 → 締め(P9)。
+     * lead は次の質問の前に添える一言（「こちらの番号宛にご連絡します」など）。
+     * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
+     */
+    advanceP8(notes, fired, lead = "") {
       const nextSlot = this.nextSlot();
       if (!nextSlot) {
         this.pending = null;
         if (!this.state.calendarRequested) {
           const sc = DEMO_SCENARIO;
           return this.speakOnly(
-            `\u62C5\u5F53\u306E\u4E88\u5B9A\u306E\u517C\u306D\u5408\u3044\u3067\u3001\u3082\u3057\u65E5\u7A0B\u5909\u66F4\u306B\u306A\u308A\u307E\u3059\u3068\u6B21\u56DE\u306E\u3054\u6848\u5185\u304C\u304B\u306A\u308A\u5148\u306B\u306A\u308B\u53EF\u80FD\u6027\u304C\u3054\u3056\u3044\u307E\u3059\u3002\u304A\u624B\u6570\u3067\u3059\u304C${sc.proposedDate}${sc.proposedTime}\u3067\u3001\u4E00\u65E6\u30AB\u30EC\u30F3\u30C0\u30FC\u306B\u3054\u4E88\u5B9A\u3060\u3051\u5165\u308C\u3066\u304A\u3044\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002`,
+            `${lead}\u62C5\u5F53\u306E\u4E88\u5B9A\u306E\u517C\u306D\u5408\u3044\u3067\u3001\u3082\u3057\u65E5\u7A0B\u5909\u66F4\u306B\u306A\u308A\u307E\u3059\u3068\u6B21\u56DE\u306E\u3054\u6848\u5185\u304C\u304B\u306A\u308A\u5148\u306B\u306A\u308B\u53EF\u80FD\u6027\u304C\u3054\u3056\u3044\u307E\u3059\u3002\u304A\u624B\u6570\u3067\u3059\u304C${sc.proposedDate}${sc.proposedTime}\u3067\u3001\u4E00\u65E6\u30AB\u30EC\u30F3\u30C0\u30FC\u306B\u3054\u4E88\u5B9A\u3060\u3051\u5165\u308C\u3066\u304A\u3044\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002`,
             "P8",
             fired,
             `${notes.join(" / ") || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 \u30AB\u30EC\u30F3\u30C0\u30FC\u767B\u9332\u4F9D\u983C\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
@@ -1553,11 +1571,38 @@
       }
       this.pending = nextSlot;
       return this.speakOnly(
-        this.askText(nextSlot),
+        `${lead}${this.askText(nextSlot)}`,
         "P8",
         fired,
         `${notes.length > 0 ? notes.join(" / ") + " \u2192 " : ""}\u6B21\u306F ${nextSlot}\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
       );
+    }
+    /** 折り返し先の電話番号を聞いている場面か（P8 の連絡先確認・不在時の折り返し先確認）。 */
+    askingPhone() {
+      if (this.state.callbackPhone || this.state.ended) return false;
+      return this.state.phase === "P8" && this.pending === "callbackPhone" || this.absentMode;
+    }
+    /**
+     * 「この番号でいいです」を受けて、発信先の番号を連絡先として確定する。
+     * 聞き直しはせず、メールアドレスが未取得ならそれを、取得済みなら残りの確認事項へ進む。
+     */
+    acceptCurrentNumber(text, fired) {
+      applyExtracted(this.state, { callback_phone: CURRENT_NUMBER_LABEL, is_current_number: true });
+      this.unknownStreak = 0;
+      this.expecting = null;
+      if (this.absentMode) return this.absentFollowUp(text, fired);
+      const ack = "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u3053\u3061\u3089\u306E\u756A\u53F7\u5B9B\u306B\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u307E\u3059\u306D\u3002";
+      const note = "\u767A\u4FE1\u756A\u53F7\u306E\u6307\u5B9A \u2192 \u3053\u306E\u756A\u53F7\u3067\u9023\u7D61\u5148\u3092\u78BA\u5B9A";
+      if (!this.state.email) {
+        this.pending = "email";
+        return this.speakOnly(
+          `${ack}\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3082\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+          "P8",
+          fired,
+          `${note} \u2192 \u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
+        );
+      }
+      return this.advanceP8([note], fired, ack);
     }
     /** そのスロットがすでに埋まっているか。 */
     isFilled(slot) {
