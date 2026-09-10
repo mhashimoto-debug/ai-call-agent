@@ -498,6 +498,7 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
     "ホームページに載ってます", "HPを見てください", "サイトに出てます", "サイト通りです",
     "担当者のお名前はお分かりでしょうか", "誰に繋げばいいですか", "どこの部署ですか",
     "担当者名 お分かりでしょうか", "名前わかりますか", "担当 誰",
+    "私です", "僕です", "当方です", "担当ですが",
   ];
 
   // 再現できるよう擬似乱数は固定シードで回す
@@ -738,4 +739,52 @@ test("受付ガード: 取次ぎ先を尋ねる疑問形は、取次ぎ語を含
   for (const text of ["どなたにお繋ぎすればよいですか", "どちらの部署におつなぎすれば？"]) {
     assert.ok(isContactGuard(text), `取次ぎ先の質問を拾えていない: ${text}`);
   }
+});
+
+// ============================================================
+// 14. タイプA: 本人が電話口に出た合図（受付突破）
+// ============================================================
+
+const SELF_IDENTIFY_CASES: string[] = [
+  "私です",
+  "私ですが",
+  "はい、私ですけど",
+  "私が担当です",
+  "自分が担当です",
+  "僕です",
+  "当方です",
+  "担当ですが",
+  "私でお伺いします",
+];
+
+for (const text of SELF_IDENTIFY_CASES) {
+  test(`タイプA 本人応答: 「${text}」で概要説明(P1)へ進む`, () => {
+    const call = new Call();
+    const r = call.say(text);
+
+    assert.equal(r.utterance, VOICE_LINES.overview.text, `概要説明へ進んでいない: ${r.matched}`);
+    assert.equal(r.audioFile, `${AUDIO_BASE}p1_overview.mp3`);
+    assert.equal(r.phase, "P1");
+    // 挨拶のリピートや判定不能に落ちないこと
+    assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `挨拶を繰り返している: ${r.matched}`);
+    assert.doesNotMatch(r.matched, /判定できず/, `判定できずに聞き直している: ${r.matched}`);
+    assertNoBreakdown(call, `本人応答「${text}」`);
+  });
+}
+
+test("タイプA 本人応答: そのままヒアリングまで進める", () => {
+  const call = new Call();
+  assert.equal(call.say("私です").utterance, VOICE_LINES.overview.text);
+  assert.equal(call.say("はい、聞いてますよ").utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(
+    call.say("50代で、役員2名と社員18名の20人です").utterance,
+    VOICE_LINES.hearingFiscalEmail.text,
+  );
+});
+
+test("タイプA 本人応答: 「私では分かりません」は本人応答として扱わない", () => {
+  const call = new Call();
+  const r = call.say("私では分かりません");
+  assert.notEqual(r.utterance, VOICE_LINES.overview.text, "決裁権なしを本人応答と誤判定している");
+  assert.equal(r.utterance, VOICE_LINES.r7Absent.text);
 });
