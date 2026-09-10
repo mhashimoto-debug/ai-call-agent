@@ -5,22 +5,22 @@
  * すべて src/domain の同じコードをそのまま import して使う。
  * このファイルが持つのは描画と再生制御だけで、会話設計のロジックは一切持たない。
  *
- * 音声デモへの拡張点:
- *   - AI 側の発話は Web Speech API（speechSynthesis）で読み上げ済み（音声トグル）
- *   - 相手側は次フェーズで SpeechRecognition に差し替える。
- *     `MockCallEngine.step()` を `CallAgent.respond()` に置き換えれば実 LLM 応答になる。
+ * 画面はマイク入力によるリアルタイム対話のみ（固定台本の再生モードは廃止）。
+ * エージェントには2つのモードがある:
+ *   - タイプA（アポ獲得）: DialogEngine。ヒアリングを取り切って商談を確定させる
+ *   - タイプB（受付突破）: TransferEngine。取次ぎを検知したら人間へ引き継ぐ
  */
 import { PHASES, PHASE_ORDER } from "../domain/phases.js";
 import { HEARING_SLOTS } from "../domain/hearing.js";
 import { GUARDRAILS } from "../domain/guardrails.js";
 import { evaluateDod } from "../domain/dod.js";
 import { createCallState, type CallState } from "../domain/state.js";
-import { MockCallEngine } from "../demo/mockEngine.js";
 import { DEMO_SCENARIO } from "../demo/scenario.js";
 import type { PhaseId } from "../domain/types.js";
 import { japaneseVoices, playAudioFile, speakUtterance, stopAudio } from "./speech.js";
 import { MicInput, micSupported } from "./mic.js";
 import { DialogEngine } from "../demo/dialogEngine.js";
+import { TransferEngine, type AgentMode } from "../demo/transferEngine.js";
 import { detectGuardrails } from "../domain/guardrails.js";
 
 const $ = (id: string): HTMLElement => {
@@ -30,13 +30,14 @@ const $ = (id: string): HTMLElement => {
 };
 
 let state: CallState = createCallState();
-let engine = new MockCallEngine(state);
 let dialog = new DialogEngine(state);
+let transfer = new TransferEngine();
 const mic = new MicInput();
 
-type Mode = "script" | "mic";
-const mode = (): Mode => (($("mode") as HTMLSelectElement).value as Mode) ?? "script";
-let playTimer: number | null = null;
+/** 現在のエージェントモード。画面上部のトグルで切り替える。 */
+let mode: AgentMode = "appointment";
+/** 通話が始まっているか（第一声を流したか）。 */
+let callStarted = false;
 
 // ---------- 描画 ----------
 
@@ -49,10 +50,13 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
 
 function renderScenario(): void {
   const s = DEMO_SCENARIO;
+  const goal =
+    mode === "transfer"
+      ? "ゴール: 受付を突破して担当者に取次いでもらい、人間のオペレーターへ引き継ぐ"
+      : `ゴール: ${s.proposedDate} ${s.proposedTime} の Zoom 商談（${s.meetingMinutes}分）確定＋ヒアリング7項目取得`;
   $("scenario").textContent =
     `架電先: ${s.companyName}（従業員${s.employeeCount}名・役員${s.officerCount}名） ／ ` +
-    `相手: ${s.contactTitle} ${s.contactName}様 ／ ` +
-    `ゴール: ${s.proposedDate} ${s.proposedTime} の Zoom 商談（${s.meetingMinutes}分）確定＋ヒアリング7項目取得`;
+    `相手: ${s.contactTitle} ${s.contactName}様 ／ ${goal}`;
 }
 
 function renderSteps(): void {
@@ -139,7 +143,7 @@ function renderGuardrails(): void {
   }
   $("compliance").textContent =
     `相手に届いた禁止表現: 0 件（出力前フィルタで発話前に遮断 ${state.blockedViolationCount} 件）。` +
-    `モックモードのため発話は設計書の定型文で、生成前制約が効いている状態です。`;
+    `発話は収録済みの台本で、生成前制約が効いている状態です。`;
 }
 
 function renderAll(): void {
@@ -147,10 +151,47 @@ function renderAll(): void {
   renderHearing();
   renderDod();
   renderGuardrails();
-  $("progress").textContent = state.ended
-    ? "通話終了"
-    : `台本 ${Math.round(engine.progress * 100)}%`;
+  renderTransfer();
   syncButtons();
+}
+
+/** タイプB（受付突破）の状況。取次ぎの検知結果と不在記録を出す。 */
+function renderTransfer(): void {
+  const list = $("transferStatus");
+  list.innerHTML = "";
+  const outcome = transfer.result;
+  const rows: [string, boolean, string][] = [
+    [
+      "取次ぎ状況",
+      outcome === "handover",
+      outcome === "handover"
+        ? "担当者接続を検知（オペレーターへ引き継ぎ）"
+        : outcome === "absent"
+          ? "不在のため終話"
+          : outcome === "rejected"
+            ? "取次ぎに至らず終話"
+            : callStarted
+              ? "架電中"
+              : "未架電",
+    ],
+    [
+      "不在記録",
+      Boolean(transfer.absenceRecord),
+      transfer.absenceRecord
+        ? `${transfer.absenceRecord.said}${
+            transfer.absenceRecord.returnTime ? `（戻り: ${transfer.absenceRecord.returnTime}）` : ""
+          }`
+        : "なし",
+    ],
+  ];
+  for (const [label, ok, detail] of rows) {
+    const li = el("li", ok ? "ok" : "ng");
+    li.append(el("span", "mark", ok ? "○" : "—"));
+    const body = el("span");
+    body.append(document.createTextNode(label), el("span", "detail", detail));
+    li.append(body);
+    list.append(li);
+  }
 }
 
 // ---------- 会話ログ ----------
@@ -158,7 +199,7 @@ function renderAll(): void {
 const transcript = (): HTMLElement => $("transcript");
 
 function clearTranscript(): void {
-  transcript().innerHTML = '<div class="empty">「次のターン」で架電を開始します</div>';
+  transcript().innerHTML = '<div class="empty">「通話開始」で架電を始めます</div>';
 }
 
 function pushPhaseSeparator(phase: PhaseId): void {
@@ -304,8 +345,9 @@ function clearInterim(): void {
   interimNode = null;
 }
 
-/** 音声認識で得たテキストを対話判定エンジンに渡し、AI に応答させる。 */
+/** 音声認識で得たテキストを、モードに応じた判定エンジンに渡す。 */
 async function handleCustomerUtterance(text: string): Promise<void> {
+  if (mode === "transfer") return handleTransferUtterance(text);
   if (busy || state.ended) return;
   busy = true;
   syncButtons();
@@ -351,6 +393,53 @@ async function handleCustomerUtterance(text: string): Promise<void> {
   }
 }
 
+/**
+ * タイプB（受付突破）。
+ * 取次ぎのサインを検知したら AI を黙らせ、人間へ引き継ぐ合図だけを出す。
+ */
+async function handleTransferUtterance(text: string): Promise<void> {
+  if (busy || transfer.finished) return;
+  busy = true;
+  syncButtons();
+  try {
+    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
+    const custNode = pushMessage("cust", "相手", text);
+    scrollToActive(custNode);
+
+    const r = transfer.respond(text);
+    if (r.guardrails.length > 0) {
+      for (const g of r.guardrails) {
+        if (!state.firedGuardrails.includes(g)) state.firedGuardrails.push(g);
+      }
+      pushFlag(
+        `ガードレール検知: ${r.guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
+      );
+    }
+
+    if (r.handover) {
+      // 人間が話す前に AI の声が被らないよう、再生中の音声を止める
+      stopVoice();
+      mic.abort();
+      pushFlag(`判定: ${r.matched}`);
+      showHandover(true);
+      renderAll();
+      return;
+    }
+
+    pushFlag(`判定: ${r.matched}`);
+    const node = pushMessage("ai", "AI", r.utterance);
+    node.classList.add("speaking");
+    renderAll();
+    scrollToActive(node);
+    await speakReply(r.utterance, r.audioFile);
+    node.classList.remove("speaking");
+    renderAll();
+  } finally {
+    busy = false;
+    syncButtons();
+  }
+}
+
 function toggleMic(): void {
   const btn = $("mic") as HTMLButtonElement;
   if (mic.listening) {
@@ -374,51 +463,69 @@ function toggleMic(): void {
     },
     onEnd: () => {
       btn.classList.remove("on");
-      btn.textContent = "🎤 マイクで話す";
+      btn.textContent = "🎤 話す";
       clearInterim();
     },
   });
 }
 
-/** モード切替。マイクモードでは台本の再生ボタンを隠す。 */
-function applyMode(): void {
-  const m = mode();
-  ($("mic") as HTMLButtonElement).hidden = m !== "mic";
-  ($("next") as HTMLButtonElement).hidden = m === "mic";
-  ($("play") as HTMLButtonElement).hidden = m === "mic";
-  if (m === "mic") {
-    mic.abort();
-    setMicNote(
-      micSupported()
-        ? "「🎤 マイクで話す」を押して話しかけてください。AI がフェーズとガードレールで分岐して応答します。"
-        : "このブラウザは音声認識に対応していません（Chrome / Edge / Safari をお使いください）。",
-      !micSupported(),
-    );
-    ($("mic") as HTMLButtonElement).disabled = !micSupported();
-    // 未発話なら AI の第一声から始める
-    if (state.turns.length === 0) void startCall();
-  } else {
-    mic.abort();
-    setMicNote("");
+/** モードごとに表示するパネルを切り替える。 */
+function applyPanels(): void {
+  const transferMode = mode === "transfer";
+  ($("transferPanel") as HTMLElement).hidden = !transferMode;
+  for (const id of ["stepsPanel", "hearingPanel", "dodPanel", "baselinePanel"]) {
+    ($(id) as HTMLElement).hidden = transferMode;
   }
+  ($("modeA") as HTMLButtonElement).classList.toggle("on", !transferMode);
+  ($("modeB") as HTMLButtonElement).classList.toggle("on", transferMode);
+}
+
+/** 担当者接続の検知アラート。 */
+function showHandover(on: boolean): void {
+  ($("handover") as HTMLElement).hidden = !on;
+  if (on) $("handover").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function setMode(next: AgentMode): void {
+  if (mode === next) return;
+  mode = next;
+  applyPanels();
+  renderScenario();
+  reset();
+}
+
+/** 起動時とリセット時の画面セットアップ。 */
+function applySetup(): void {
+  mic.abort();
+  applyPanels();
+  setMicNote(
+    micSupported()
+      ? "「📞 通話開始」を押すと架電が始まります。以降は「🎤 話す」で話しかけてください。"
+      : "このブラウザは音声認識に対応していません（Chrome / Edge / Safari をお使いください）。",
+    !micSupported(),
+  );
   syncButtons();
 }
 
-/** マイクモードの開始。AI の第一声を出す。 */
+/** 通話開始。AI の第一声（取次ぎ依頼）を出す。 */
 async function startCall(): Promise<void> {
   busy = true;
+  callStarted = true;
   syncButtons();
   try {
     if (transcript().querySelector(".empty")) transcript().innerHTML = "";
-    const r = dialog.greeting();
-    pushPhaseSeparator(r.phase);
-    lastPhase = r.phase;
+    const r = mode === "transfer" ? transfer.greeting() : dialog.greeting();
+    if ("phase" in r) {
+      pushPhaseSeparator(r.phase);
+      lastPhase = r.phase;
+    }
     const node = pushMessage("ai", "AI", r.utterance);
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
     await speakReply(r.utterance, r.audioFile);
     node.classList.remove("speaking");
+    setMicNote("「🎤 話す」を押して話しかけてください。");
   } finally {
     busy = false;
     syncButtons();
@@ -426,106 +533,31 @@ async function startCall(): Promise<void> {
 }
 
 let busy = false;
-let playing = false;
 
 function syncButtons(): void {
-  ($("next") as HTMLButtonElement).disabled = state.ended || busy;
-  ($("play") as HTMLButtonElement).disabled = state.ended;
-  ($("mic") as HTMLButtonElement).disabled = state.ended || busy || !micSupported();
-  $("play").textContent = playing ? "⏸ 停止" : "⏩ 自動再生";
-}
-
-/**
- * 1ターン進める。
- * AI が話し終わってから相手のセリフを出すため、音声ONでもログと音声がずれない。
- */
-async function step(): Promise<void> {
-  if (busy || state.ended) return;
-  busy = true;
-  syncButtons();
-  try {
-    const s = engine.step();
-    if (!s) return;
-    if (transcript().querySelector(".empty")) transcript().innerHTML = "";
-
-    if (s.overrideReason) pushFlag(`⚠ 遷移を却下: ${s.overrideReason}`);
-
-    if (s.agent.text) {
-      if (s.agent.phase !== lastPhase) {
-        pushPhaseSeparator(s.agent.phase);
-        lastPhase = s.agent.phase;
-      }
-      const node = pushMessage("ai", "AI", s.agent.text);
-      node.classList.add("speaking");
-      renderAll();
-      scrollToActive(node);
-      await speak(s.agent.text); // 読み上げ終了まで待つ
-      node.classList.remove("speaking");
-    }
-
-    // AI が話し終わってから相手が返す
-    for (const c of s.customer) {
-      await pause(voiceOn() ? 450 : 120);
-      const node = pushMessage("cust", c.role, c.text);
-      if (c.guardrails.length > 0) {
-        pushFlag(
-          `ガードレール検知: ${c.guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
-        );
-      }
-      renderAll();
-      scrollToActive(node);
-    }
-
-    renderAll();
-  } finally {
-    busy = false;
-    syncButtons();
-  }
-}
-
-/** 自動再生。固定間隔ではなく「1ターンが終わったら次」で回すので音声と同期する。 */
-async function playLoop(): Promise<void> {
-  while (playing && !state.ended) {
-    await step();
-    if (!playing || state.ended) break;
-    await pause(voiceOn() ? 500 : 1500);
-  }
-  playing = false;
-  syncButtons();
-}
-
-function stopPlay(): void {
-  playing = false;
-  syncButtons();
-}
-
-function togglePlay(): void {
-  if (playing) {
-    stopPlay();
-    stopVoice();
-    return;
-  }
-  playing = true;
-  syncButtons();
-  void playLoop();
+  const btn = $("mic") as HTMLButtonElement;
+  const ended = mode === "transfer" ? transfer.finished : state.ended;
+  btn.disabled = ended || busy || !micSupported();
+  if (!callStarted) btn.textContent = "📞 通話開始";
+  else if (!mic.listening) btn.textContent = "🎤 話す";
 }
 
 function reset(): void {
-  stopPlay();
   stopVoice();
   busy = false;
+  callStarted = false;
   mic.abort();
   clearInterim();
-  setMicNote("");
+  showHandover(false);
   state = createCallState();
-  engine = new MockCallEngine(state);
   dialog = new DialogEngine(state);
+  transfer = new TransferEngine();
   lastPhase = null;
   clearTranscript();
   setFollow(true);
   renderAll();
+  applySetup();
   window.scrollTo({ top: 0 });
-  if (mode() === "mic") void startCall();
 }
 
 // ---------- 起動 ----------
@@ -533,12 +565,13 @@ function reset(): void {
 renderScenario();
 renderAll();
 
-$("next").addEventListener("click", () => {
-  stopPlay();
-  stopVoice();
-  void step();
+$("mic").addEventListener("click", () => {
+  if (!callStarted) {
+    void startCall();
+    return;
+  }
+  toggleMic();
 });
-$("play").addEventListener("click", togglePlay);
 $("reset").addEventListener("click", reset);
 $("follow").addEventListener("click", () => {
   setFollow(true);
@@ -548,7 +581,7 @@ $("follow").addEventListener("click", () => {
 $("voice").addEventListener("change", () => {
   if (!voiceOn()) stopVoice();
 });
-$("mic").addEventListener("click", toggleMic);
-$("mode").addEventListener("change", applyMode);
-applyMode();
+$("modeA").addEventListener("click", () => setMode("appointment"));
+$("modeB").addEventListener("click", () => setMode("transfer"));
+applySetup();
 void initVoices();
