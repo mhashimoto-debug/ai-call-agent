@@ -12,7 +12,6 @@
  * 応答には対応する録音（public/audio/*.mp3）のパスを紐付けて返す。
  * 画面側はこれがあれば TTS ではなく録音を優先再生する（詳細は AUDIO_BASE 付近のコメント）。
  */
-import { PHASES } from "../domain/phases.js";
 import { GUARDRAILS, detectGuardrails } from "../domain/guardrails.js";
 import { HEARING_SLOT_MAP } from "../domain/hearing.js";
 import {
@@ -42,7 +41,7 @@ export interface DialogReply {
   audioFile?: string;
 }
 
-// ---------- 録音ファイルの対応表 ----------
+// ---------- 収録台本（Vrew 台本 = 画面表示テキスト = 音声） ----------
 
 /**
  * 録音の置き場所。ページからの相対パスにしてあるので、
@@ -50,29 +49,113 @@ export interface DialogReply {
  */
 export const AUDIO_BASE = "public/audio/";
 
-/** フェーズごとの録音。P2/P3 と P4/P5 は 1 本の録音が両方を含む。 */
-export const PHASE_AUDIO: Partial<Record<PhaseId, string>> = {
-  P0: "p0_greeting.mp3",
-  P0X: "reject_closing.mp3",
-  P1: "p1_overview.mp3",
-  P2: "p2_p3_hearing.mp3",
-  P3: "p2_p3_hearing.mp3",
-  P4: "p4_p5_hearin.mp3",
-  P5: "p4_p5_hearin.mp3",
-  P6: "reschedule.mp3",
-  P7: "p7_schedule.mp3",
-  P8: "p8_recovery.mp3",
-  P9: "p9_closing.mp3",
+export interface VoiceLine {
+  /** public/audio/ 内のファイル名 */
+  readonly file: string;
+  /** 収録した読み上げ内容そのもの */
+  readonly text: string;
+}
+
+/**
+ * Vrew に入力した最新台本。
+ *
+ * 画面に出す文字列と再生する音声を必ずこの1箇所から取り出すことで、
+ * 「表示テキストと音声が食い違う」ことが構造的に起きないようにしている。
+ * 台本を直すときはここだけを直す（対応する MP3 の録り直しも必要）。
+ */
+export const VOICE_LINES = {
+  greeting: {
+    file: "p0_greeting.mp3",
+    text: "お世話になっております。私、企業型確定拠出年金相談センターと申します。2026年12月の法改正の件で、ご担当者様にお繋ぎいただけますでしょうか？",
+  },
+  overview: {
+    file: "p1_overview.mp3",
+    text: "あ、ありがとうございます！実は今回の法改正により、企業型DCの導入要件が大幅に緩和され、事業主様の節税効果や優秀な人材確保に向けたメリットが非常に大きくなっております。御社でのご活用状況について確認でお電話させていただきました。",
+  },
+  hearingAgeCount: {
+    file: "p2_p3_hearing.mp3",
+    text: "ご回答ありがとうございます！現在御社で対象となる方の主な年齢層と、役員様・従業員様を合わせた全体の人数はおおよそ何名様になりますでしょうか？",
+  },
+  hearingFiscalEmail: {
+    file: "p4_p5_hearin.mp3",
+    text: "ご教示ありがとうございます！最新のシミュレーション資料をお送りしたいのですが、御社の決算月と、送付先のメールアドレスをお伺いできますでしょうか？",
+  },
+  schedule: {
+    file: "p7_schedule.mp3",
+    text: "ありがとうございます！ご状況に合わせた最適な活用案について、弊社専門スタッフより15分ほどオンラインでご案内できればと存じます。例えば、来週の水曜日14時頃のご都合はいかがでしょうか？",
+  },
+  reschedule: {
+    file: "reschedule.mp3",
+    text: "失礼いたしました！それでは、別の日時として木曜日の15時頃はいかがでしょうか？",
+  },
+  contact: {
+    file: "p8_recovery.mp3",
+    text: "ご教示いただき誠にありがとうございます！確認のため、ご担当者様の直通のお電話番号、またはメールアドレスをお伺いしてもよろしいでしょうか？",
+  },
+  closing: {
+    file: "p9_closing.mp3",
+    text: "お時間をいただき誠にありがとうございます！それではご指定の日時に、お伺いいたしましたメールアドレスへオンライン会議のURLをお送りいたします。当日はどうぞよろしくお願いいたします。失礼いたします。",
+  },
+  reject: {
+    file: "reject_closing.mp3",
+    text: "承知いたしました。貴重なお時間をいただき誠にありがとうございました。それでは失礼いたします。",
+  },
+  r1NoSystem: {
+    file: "r1_no_system.mp3",
+    text: "あ、失礼いたしました！実は今回の法改正は、まだ導入されていない企業様ほど節税やコスト削減のメリットが大きい内容となっております。差し支えなければ、御社の現在の従業員数だけお伺いできますでしょうか？",
+  },
+  r2Busy: {
+    file: "r2_busy.mp3",
+    text: "あ、大変失礼いたしました！お忙しい時間帯にお電話してしまいましたよね。本当に30秒だけ要点をお伝えして、すぐにお電話切らせていただきますね。実は今回の法改正で企業型DCの導入要件が大きく変わり、会社側の節税メリットが非常に大きくなったため確認でお電話いたしました。差し支えなければ、御社の現在の従業員数だけお伺いできますでしょうか？",
+  },
+  r3Expert: {
+    file: "r3_expert.mp3",
+    text: "あ、すでに信頼できる専門家様がいらっしゃるのですね！素晴らしいです。ただ、今回の企業型DC法改正は社労士様や税理士様でも見落とされやすい専門領域となっております。セカンドオピニオンとして情報確認だけでもいかがでしょうか？",
+  },
+  r4Document: {
+    file: "r4_document.mp3",
+    text: "承知いたしました！ご検討いただきありがとうございます。お送りする資料に相違がないよう、差し支えなければ送付先のメールアドレスをお伺いできますでしょうか？",
+  },
+  r5OtherScheme: {
+    file: "r5_misunderstanding.mp3",
+    text: "あ、ご認識ありがとうございます！実はiDeCoや個人の年金ではなく、会社側の社会保険料や税金も軽減できる企業型の制度についての法改正となっております。",
+  },
+  r7Absent: {
+    file: "r7_absent.mp3",
+    text: "承知いたしました。お戻りの際にご案内資料をお渡しできればと存じますので、恐れ入りますがご担当者様のメールアドレスか、ご直通のお電話番号をお伺いしてもよろしいでしょうか？",
+  },
+} as const satisfies Record<string, VoiceLine>;
+
+export type VoiceLineId = keyof typeof VOICE_LINES;
+
+/**
+ * フェーズごとの「その場面の主質問」。
+ * 想定外の発話で立て直すとき、どの録音に戻ればよいかをここで決める。
+ */
+export const PHASE_ANCHOR: Partial<Record<PhaseId, VoiceLineId>> = {
+  P0: "greeting",
+  P1: "overview",
+  P2: "hearingAgeCount",
+  P3: "hearingAgeCount",
+  P4: "hearingFiscalEmail",
+  P5: "hearingFiscalEmail",
+  P6: "schedule",
+  P7: "schedule",
+  P8: "contact",
+  P9: "closing",
 };
 
-/** ガードレール発火時の切り返し録音。 */
-export const GUARDRAIL_AUDIO: Record<GuardrailId, string> = {
-  R1: "r1_no_system.mp3",
-  R2: "r2_busy.mp3",
-  R3: "r3_expert.mp3",
-  R4: "r4_document.mp3",
-  R5: "r5_misunderstanding.mp3",
-  R7: "r7_absent.mp3",
+/**
+ * ガードレール発火時に流す録音。
+ * R5 だけは「他制度との勘違い」用の収録なので、公的機関との誤認は別扱いにする
+ * （立場の切り分けは実データ由来の必須ルールで、省略すると最後まで噛み合わない）。
+ */
+export const GUARDRAIL_LINE: Record<Exclude<GuardrailId, "R5">, VoiceLineId> = {
+  R1: "r1NoSystem",
+  R2: "r2Busy",
+  R3: "r3Expert",
+  R4: "r4Document",
+  R7: "r7Absent",
 };
 
 export const audioUrl = (file: string): string => `${AUDIO_BASE}${file}`;
@@ -83,7 +166,7 @@ export const audioUrl = (file: string): string => `${AUDIO_BASE}${file}`;
 
 /** 肯定。 */
 const YES =
-  /(はい|ええ|うん|そうです|そうですね|そうしま|もちろん|ぜひ|是非|わかりました|分かりました|承知|了解|大丈夫|平気|問題ありませ|問題ない|構いませ|かまいませ|お願いし|いいです|いいよ|良いです|結構ですよ|それで|オッケー|オーケー|ＯＫ|OK|どうぞ|お聞きし|聞いてみ|やってみ)/i;
+  /(はい|ええ|うん|そうです|そうですね|そうしま|もちろん|ぜひ|是非|わかりました|分かりました|承知|了解|大丈夫|平気|問題ありませ|問題ない|構いませ|かまいませ|お願いし|いいです|いいよ|良いです|結構ですよ|それでいい|それで結構|それで大丈夫|それでお願い|オッケー|オーケー|ＯＫ|OK|どうぞ|お聞きし|聞いてみ|やってみ)/i;
 /** 否定。「結構ですよ」（肯定）と「結構です」（断り）を取り違えないようにする。 */
 const NO =
   /(いいえ|いえいえ|いや|結構です(?!よ)|けっこうです|いりません|要りません|必要ありませ|必要ない|不要|遠慮|間に合って|やめ|やらない|やりません|しません|やめておき|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|見送|お断り|断りし|だめ|ダメ|駄目)/;
@@ -105,6 +188,13 @@ const SCHEDULE_OK =
 /** 時間帯の指定。2択に答えたとみなす。 */
 const TIME_SLOT =
   /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
+
+/**
+ * R5 のうち「公的機関との誤認」だけを切り分ける。
+ * こちらは収録が無く、立場の切り分け（民間の導入支援事業者）を必ず読み上げる必要がある。
+ */
+const PUBLIC_BODY_CONFUSION =
+  /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省|年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労働基準監督署|公務員|職員|担当官|補助金|助成金|給付金)/;
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const PHONE_RE = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
@@ -168,12 +258,16 @@ function firstNumber(text: string, patterns: RegExp[]): number | null {
 export interface BulkFacts {
   /** 役員人数 */
   officers?: number;
-  /** 社会保険加入人数 */
+  /** 社会保険加入人数（人数の指定が1つだけなら全体人数として扱う） */
   insured?: number;
   /** 決算月 */
   fiscalMonth?: number;
   /** 代表年齢 */
   age?: number;
+  /** メールアドレス */
+  email?: string;
+  /** 折り返し先の電話番号 */
+  phone?: string;
 }
 
 /**
@@ -190,24 +284,42 @@ export function bulkExtract(text: string): BulkFacts {
   if (insured !== null) facts.insured = insured;
   if (month !== null && month >= 1 && month <= 12) facts.fiscalMonth = month;
   if (age !== null && age >= 18 && age <= 99) facts.age = age;
+  // 新台本は「決算月とメールアドレス」「電話番号またはメールアドレス」をまとめて聞くため、
+  // 連絡先もこの場で拾えるようにしておく
+  const email = EMAIL_RE.exec(text.replace(/\s/g, ""))?.[0];
+  const phone = PHONE_RE.exec(text.replace(/\s/g, ""))?.[0];
+  if (email) facts.email = email;
+  if (phone) facts.phone = phone;
   return facts;
 }
 
+/** 年齢層の回答（「50代」「40代から50代」）。 */
+const AGE_ERA = /(\d{2})\s*代/;
+/** 文脈語のない人数（「20人くらいです」）。その場面で人数を聞いているときだけ使う。 */
+const BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
+
 /** P8 で今どのスロットを聞いているか。 */
 type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow";
+
+/** ガードレールの切り返しで相手に投げた質問。次の発話をその文脈で読む。 */
+type Expecting = "headcount" | "contact" | null;
 
 export class DialogEngine {
   private pending: PendingSlot | null = null;
   /** 直前の発話で一括抽出できた項目（画面に「まとめ聞きで取得」と出すため） */
   private harvested: HearingId[] = [];
-  /** 再生済みの録音。同じ録音を1通話で二度流さない（P2/P3 等は1本に収録されている） */
-  private playedAudio = new Set<string>();
+  /** すでに読み上げた収録台本。同じ録音を続けて流さないために持つ。 */
+  private said = new Set<VoiceLineId>();
+  /** 切り返しで投げた質問（従業員数だけ／連絡先だけ） */
+  private expecting: Expecting = null;
+  /** 想定外の発話が続いた回数。立て直しの段階を決める。 */
+  private unknownStreak = 0;
 
   constructor(private state: CallState) {}
 
   /** 架電開始の第一声。 */
   greeting(): DialogReply {
-    return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", [], "架電開始", PHASE_AUDIO.P0);
+    return this.say("greeting", "P0", [], "架電開始");
   }
 
   /** 相手の発話を受けて応答を1つ返す。state は破壊的に更新される。 */
@@ -220,6 +332,8 @@ export class DialogEngine {
 
     // まとめ聞き対応: 質問していない項目でも、言われた時点で拾って保持する
     this.harvested = this.harvest(text);
+    // 切り返しで投げた質問への回答は、フェーズに関係なくここで回収する
+    this.collectExpected(text);
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
@@ -230,30 +344,32 @@ export class DialogEngine {
       case "P1":
         return this.p1(text, fired);
       case "P2":
-        return this.p2(text, fired);
       case "P3":
-        return this.p3(text, fired);
+        return this.hearingAgeCount(text, fired);
       case "P4":
-        return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "法改正フック後 → 低ハードル打診", PHASE_AUDIO.P5);
       case "P5":
-        return this.p5(text, fired);
+        return this.hearingFiscalEmail(text, fired);
       case "P6":
-        return this.p6(text, fired);
       case "P7":
         return this.p7(text, fired);
       case "P8":
         return this.p8(text, fired);
       case "P9":
-        return this.reply("本日はお時間をいただきありがとうございました。失礼いたします。", "END", fired, "締め完了");
+        return this.speakOnly(
+          "本日はお時間をいただきありがとうございました。失礼いたします。",
+          "END",
+          fired,
+          "締め完了",
+        );
       default:
-        return this.reply("ありがとうございました。失礼いたします。", "END", fired, "終話");
+        return this.speakOnly("ありがとうございました。失礼いたします。", "END", fired, "終話");
     }
   }
 
   /**
-   * 発話から人数・決算月・年齢を拾って state に入れる。
+   * 発話から人数・決算月・年齢・連絡先を拾って state に入れる。
    * すでに取得済みの項目は上書きしない（取りこぼし防止と同じ方針）。
-   * 戻り値は「今回新しく埋まった項目」。
+   * 戻り値は「今回新しく埋まったヒアリング項目」。
    */
   private harvest(text: string): HearingId[] {
     const b = bulkExtract(text);
@@ -268,8 +384,29 @@ export class DialogEngine {
     if (b.insured !== undefined) put("H5", `${b.insured}名`);
     if (b.fiscalMonth !== undefined) put("H7", `${b.fiscalMonth}月`);
     if (b.age !== undefined) put("H3", `${b.age}歳`);
-    if (filled.length > 0) applyExtracted(this.state, facts);
+    if (b.email && !this.state.email) facts.email = b.email;
+    if (b.phone && !this.state.callbackPhone) facts.callback_phone = b.phone;
+    if (filled.length > 0 || facts.email || facts.callback_phone) applyExtracted(this.state, facts);
     return filled;
+  }
+
+  /**
+   * 「従業員数だけ」「連絡先だけ」など切り返しで投げた質問への回答を回収する。
+   * 文脈語が無い回答（「20人です」）でも、直前に聞いた項目としてなら受け取れる。
+   */
+  private collectExpected(text: string): void {
+    if (!this.expecting) return;
+    if (this.expecting === "headcount") {
+      const n = this.state.hearing.H5 ? null : toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+      if (n !== null && n > 0) {
+        applyExtracted(this.state, { H5: `${n}名` });
+        this.harvested.push("H5");
+        this.expecting = null;
+      }
+      return;
+    }
+    // contact: メール・電話は harvest 側で拾えているので、入ったかどうかだけ見る
+    if (this.state.email || this.state.callbackPhone) this.expecting = null;
   }
 
   // ---------- ガードレール優先の分岐（設計書 §5） ----------
@@ -277,68 +414,49 @@ export class DialogEngine {
   private byGuardrail(text: string, fired: GuardrailId[]): DialogReply | null {
     const has = (id: GuardrailId): boolean => fired.includes(id);
 
-    // R5: 公的機関との誤認は最優先で解く
+    // R5: 誤認は最優先で解く。
+    // 公的機関との誤認だけは収録が無いので、立場の切り分けを読み上げで必ず行う。
     if (has("R5")) {
-      return this.reply(
-        "紛らわしくて申し訳ございません。制度は厚生労働省の管轄ですが、私どもは民間の導入支援事業者でございます。",
-        this.state.phase,
-        fired,
-        "R5: 公的機関との誤認を即座に訂正",
-        GUARDRAIL_AUDIO.R5,
-      );
+      this.unknownStreak = 0;
+      if (PUBLIC_BODY_CONFUSION.test(text)) {
+        return this.speakOnly(
+          "紛らわしくて申し訳ございません。制度は厚生労働省の管轄ですが、私どもは民間の導入支援事業者でございます。",
+          this.state.phase,
+          fired,
+          "R5: 公的機関との誤認を即座に訂正（録音なし・音声合成）",
+        );
+      }
+      return this.say("r5OtherScheme", this.state.phase, fired, "R5: iDeCo・個人年金との勘違いを訂正");
     }
-    // R7: 決裁者でない／不在なら、次回接触条件の確定に切り替える
+    // R7: 決裁者でない／不在なら、次回接触のための連絡先の確定に切り替える
     if (has("R7")) {
-      return this.reply(
-        "承知いたしました。それでは代表の方はいつ頃お戻りでしょうか。お繋ぎいただきやすい時間帯だけ教えていただけますと助かります。",
-        this.state.phase,
-        fired,
-        "R7: ヒアリングを止めて次回接触条件の確定へ",
-        GUARDRAIL_AUDIO.R7,
-      );
+      this.unknownStreak = 0;
+      this.expecting = "contact";
+      return this.say("r7Absent", this.state.phase, fired, "R7: ヒアリングを止めて連絡先の確保へ");
     }
     // R1: 「制度がない」は断りではなく最も見込みが高いホットサイン
     if (has("R1")) {
-      return this.reply(
-        "そうなのですね、ありがとうございます。これから作られる前提で、役員様1名からでもご導入いただけます。" +
-          PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
-        "P3",
-        fired,
-        "R1: 断り判定を禁止し、差別化(P3)へ",
-        GUARDRAIL_AUDIO.R1,
-      );
+      this.unknownStreak = 0;
+      this.expecting = "headcount";
+      return this.say("r1NoSystem", "P3", fired, "R1: 断り判定を禁止し、未導入企業向けの訴求＋人数確認へ");
     }
-    // R3: 専門家を否定せず、判断材料を渡す立場に回る
+    // R3: 専門家を否定せず、セカンドオピニオンの位置に回る
     if (has("R3")) {
-      return this.reply(
-        "さすがですね。先生にご相談いただくための判断材料をお渡しするところまでが私どもの担当ですので、その材料だけお持ちできればと思っております。",
-        this.state.phase,
-        fired,
-        "R3: 専門家を否定せず判断材料の提供に回る",
-        GUARDRAIL_AUDIO.R3,
-      );
+      this.unknownStreak = 0;
+      return this.say("r3Expert", this.state.phase, fired, "R3: 専門家を否定せずセカンドオピニオンとして提案");
     }
-    // R4: 資料送付で終わらせず、手段の選択と再架電日をセットで取る
+    // R4: 資料送付で終わらせず、送付先メールアドレスの確定をセットで取る
     if (has("R4")) {
-      return this.reply(
-        "承知いたしました。資料はメール・SMS・郵送のいずれがよろしいでしょうか。お送りしたうえで、改めてご感想だけ伺うお電話を差し上げたいのですが、来週でしたら前半と後半どちらがご都合よろしいですか？",
-        this.state.phase,
-        fired,
-        "R4: 送付手段の選択＋再架電日の確定をセットで",
-        GUARDRAIL_AUDIO.R4,
-      );
+      this.unknownStreak = 0;
+      this.expecting = "contact";
+      return this.say("r4Document", this.state.phase, fired, "R4: 送付を受けたうえで送付先メールアドレスを確定");
     }
-    // R2: 忙しい相手に制度説明を被せない。時間の約束だけに切り替える
+    // R2: 忙しい相手には要点だけを短く伝え、人数確認まで一気に運ぶ
     if (has("R2")) {
-      const target: PhaseId = this.state.phase === "P8" || this.state.phase === "P9" ? this.state.phase : "P6";
-      return this.reply(
-        "お忙しいところ失礼いたしました。お時間は取らせません。" +
-          PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
-        target,
-        fired,
-        "R2: 説明を被せず仮押さえクローズへ",
-        GUARDRAIL_AUDIO.R2,
-      );
+      this.unknownStreak = 0;
+      this.expecting = "headcount";
+      // 新台本の R2 は仮押さえではなく「30秒で要点＋人数確認」なのでフェーズは動かさない
+      return this.say("r2Busy", this.state.phase, fired, "R2: 30秒で要点を伝えて人数確認へ");
     }
     return null;
   }
@@ -347,170 +465,109 @@ export class DialogEngine {
 
   private p0(text: string, fired: GuardrailId[]): DialogReply {
     if (REFUSE_SALES.test(text)) {
-      return this.reply(PHASES.P0X.mustSay.join(" "), "P0X", fired, "受付ブロック → 痕跡を残して撤退", PHASE_AUDIO.P0X);
+      this.unknownStreak = 0;
+      return this.say("reject", "P0X", fired, "受付ブロック → 丁寧に撤退");
     }
-    if (TRANSFER.test(text)) {
-      // 代表が出る前に名乗りを始めないよう、ここでは短く受けるだけにする
-      return this.reply(
-        "ありがとうございます。よろしくお願いいたします。",
+    // 取次ぎでも用件確認でも、次に話すのは法改正の概要（収録台本どおり）
+    if (TRANSFER.test(text) || ASK_PURPOSE.test(text)) {
+      this.unknownStreak = 0;
+      return this.say(
+        "overview",
         "P1",
         fired,
-        "取次ぎ発生 → 代表が出るのを待つ(P1)",
+        TRANSFER.test(text) ? "取次ぎ発生 → 法改正の概要" : "用件を問われた → 法改正の概要",
       );
     }
-    if (ASK_PURPOSE.test(text)) {
-      return this.reply(PHASES.P0.conditional[0]?.say ?? "", "P0", fired, "用件を問われた → 巻き込み質問で返す");
-    }
-    return this.reply(PHASES.P0.mustSay[0] ?? "", "P0", fired, "取次ぎ依頼を簡潔に繰り返す");
+    return this.repair(fired, "受付の反応を判定できず");
   }
 
   private p1(text: string, fired: GuardrailId[]): DialogReply {
-    // 名乗り（立場の切り分け＋巻き込み質問）がまだなら、まずそれを行う
-    const introduced = this.state.turns.some(
-      (t) => t.speaker === "agent" && /突然のお電話/.test(t.text),
-    );
-    if (!introduced) {
-      return this.reply(
-        PHASES.P1.mustSay.join(" "),
-        "P1",
-        fired,
-        "代表接続 → 名乗り＋立場の切り分け＋巻き込み質問",
-        PHASE_AUDIO.P1,
-      );
+    if (!this.said.has("overview")) {
+      return this.say("overview", "P1", fired, "担当者接続 → 法改正の概要");
     }
-    // 相手が挙げた既存の備えを受け止めてから、充足度を問う（設計書 P2）
-    const ack = /保険/.test(text)
-      ? "保険でご準備されているんですね、ありがとうございます。"
-      : /中退共/.test(text)
-        ? "中退共にご加入なんですね、ありがとうございます。"
-        : "ありがとうございます。";
-    return this.reply(
-      `${ack}ちなみにそちらは、${DEMO_SCENARIO.contactName}様ご自身の退職金のご準備としても十分に活用できていらっしゃいますか？`,
-      "P2",
+    this.unknownStreak = 0;
+    return this.say("hearingAgeCount", "P3", fired, "概要への反応 → 年齢層と人数のヒアリング");
+  }
+
+  /** P2/P3: 年齢層・人数を聞いている場面。 */
+  private hearingAgeCount(text: string, fired: GuardrailId[]): DialogReply {
+    const got = [...this.harvested];
+
+    // 「20人くらい」「50代です」のように文脈語が無い回答も、この場面なら受け取れる
+    if (!this.state.hearing.H5) {
+      const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+      if (n !== null && n > 0) {
+        applyExtracted(this.state, { H5: `${n}名` });
+        got.push("H5");
+      }
+    }
+    if (!this.state.hearing.H3) {
+      const era = AGE_ERA.exec(text)?.[1];
+      if (era) {
+        applyExtracted(this.state, { H3: `${era}代` });
+        got.push("H3");
+      }
+    }
+
+    if (got.length === 0 && !YES.test(text)) {
+      return this.repair(fired, "年齢層・人数の回答として読み取れず");
+    }
+    this.unknownStreak = 0;
+    this.expecting = null;
+    const note = got.length > 0 ? `${[...new Set(got)].join("・")} を取得` : "反応を確認";
+    return this.say("hearingFiscalEmail", "P5", fired, `${note} → 決算月と送付先メールアドレスへ`);
+  }
+
+  /** P4/P5: 決算月・メールアドレスを聞いている場面。 */
+  private hearingFiscalEmail(text: string, fired: GuardrailId[]): DialogReply {
+    const got: string[] = [...this.harvested];
+
+    // この場面での「3月です」は決算月とみなしてよい
+    if (!this.state.hearing.H7) {
+      const m = toNumber(MONTH_RE.exec(text)?.[1] ?? "");
+      if (m !== null && m >= 1 && m <= 12) {
+        applyExtracted(this.state, { H7: `${m}月` });
+        got.push("H7");
+      }
+    }
+    if (this.state.email && !got.includes("email") && EMAIL_RE.test(text.replace(/\s/g, ""))) {
+      got.push("email");
+    }
+
+    if (got.length === 0 && !YES.test(text)) {
+      return this.repair(fired, "決算月・メールアドレスの回答として読み取れず");
+    }
+    this.unknownStreak = 0;
+    this.expecting = null;
+    return this.say(
+      "schedule",
+      "P7",
       fired,
-      "受け止め → 充足度質問（「あるか」ではなく「足りているか」）",
-      PHASE_AUDIO.P2,
+      `${[...new Set(got)].join("・") || "反応を確認"} を取得 → オンライン商談の日程打診`,
     );
   }
 
-  private p2(text: string, fired: GuardrailId[]): DialogReply {
-    return this.reply(
-      PHASES.P3.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
-      "P3",
-      fired,
-      "現状の不足・不明を確認 → 差別化(P3)",
-      PHASE_AUDIO.P3,
-    );
-  }
-
-  private p3(text: string, fired: GuardrailId[]): DialogReply {
-    if (/中退共/.test(text)) {
-      return this.reply(
-        PHASES.P3.conditional[0]?.say ?? "",
-        "P3",
-        fired,
-        "条件分岐: 中退共は従業員のみが対象",
-      );
-    }
-    if (/(iDeCo|イデコ|小規模企業共済)/i.test(text)) {
-      return this.reply(
-        PHASES.P3.conditional[1]?.say ?? "",
-        "P3",
-        fired,
-        "条件分岐: iDeCo・小規模企業共済とは併用可能",
-      );
-    }
-    if (this.state.lawChangeHookUsed) {
-      return this.reply(PHASES.P5.mustSay.join(" "), "P5", fired, "法改正フックは使用済み → P5 へ", PHASE_AUDIO.P5);
-    }
-    return this.reply(PHASES.P4.mustSay.join(" "), "P4", fired, "差別化を理解 → 法改正フック(1回のみ)", PHASE_AUDIO.P4);
-  }
-
-  private p5(text: string, fired: GuardrailId[]): DialogReply {
-    if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
-      return this.reply(
-        "ありがとうございます。来週でしたら、午前と午後どちらがよろしいですか？",
-        "P7",
-        fired,
-        "即OK → 日程2択クローズ",
-        PHASE_AUDIO.P7,
-      );
-    }
-    return this.reply(
-      PHASES.P6.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
-      "P6",
-      fired,
-      "保留・要相談 → 仮押さえクローズ",
-      PHASE_AUDIO.P6,
-    );
-  }
-
-  private p6(text: string, fired: GuardrailId[]): DialogReply {
-    if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
-      return this.reply(
-        "ありがとうございます。来週でしたら、午前と午後どちらがよろしいですか？",
-        "P7",
-        fired,
-        "仮押さえ同意 → 日程2択",
-        PHASE_AUDIO.P7,
-      );
-    }
-    return this.reply(
-      "承知いたしました。それでは本日中でお時間いただける頃はございませんか？",
-      "P6",
-      fired,
-      "再架電の約束に切り替え",
-      PHASE_AUDIO.P6,
-    );
-  }
-
+  /** P6/P7: 日程を詰めている場面。 */
   private p7(text: string, fired: GuardrailId[]): DialogReply {
-    if (/(ズーム|zoom)/i.test(text) && /(何|なに|わからない|分からない|使えない|詳しくない)/.test(text)) {
-      return this.reply(
-        "スマートフォンでも参加できます。メールでお送りするURLをタップいただくだけです。",
-        "P7",
-        fired,
-        "条件分岐: Zoom の説明",
-      );
+    // 日程NG は開いた質問に戻さず、収録済みの代替日程で出し直す
+    if (SCHEDULE_NG.test(text) && !SCHEDULE_OK.test(text)) {
+      this.unknownStreak = 0;
+      return this.say("reschedule", "P7", fired, "日程NG → 代替日程を提示");
     }
-    if (/(遠い|距離|来られ|お越し)/.test(text)) {
-      return this.reply("オンラインですので移動は不要です。", "P7", fired, "条件分岐: オンラインなので移動不要");
-    }
-    // 時間帯の指定がないまま「その日は難しい」と言われたケース。開いた質問に戻さず2択で出し直す
-    if (SCHEDULE_NG.test(text) && !TIME_SLOT.test(text)) {
-      return this.reply(
-        "承知いたしました。それでは再来週でしたら、前半と後半のどちらがご都合よろしいでしょうか？",
-        "P7",
-        fired,
-        "日程NG → 別週の2択で出し直す",
-      );
-    }
-    const sc = DEMO_SCENARIO;
-    if (TIME_SLOT.test(text)) {
-      return this.reply(
-        `ありがとうございます。では${sc.proposedDate}${sc.proposedTime}から${sc.meetingMinutes}分でいかがでしょうか？`,
-        "P7",
-        fired,
-        "2択の回答 → 1点に確定させる",
-      );
-    }
-    if ((YES.test(text) || SCHEDULE_OK.test(text)) && !NO.test(text)) {
+    if ((YES.test(text) || SCHEDULE_OK.test(text) || TIME_SLOT.test(text)) && !NO.test(text)) {
+      const sc = DEMO_SCENARIO;
       applyExtracted(this.state, {
         appointment_date: sc.proposedDate,
         appointment_time: sc.proposedTime,
         zoom_agreed: true,
         duration_agreed: true,
       });
-      this.pending = null;
-      return this.reply(
-        PHASES.P8.mustSay[0]?.replace(/^（[^）]*）/, "") ?? "",
-        "P8",
-        fired,
-        "日時確定 → ヒアリングの許可取得(P8)",
-        PHASE_AUDIO.P8,
-      );
+      this.unknownStreak = 0;
+      // 収録台本の次の一言が「直通の電話番号またはメールアドレス」なので、それを待つ
+      this.pending = this.state.callbackPhone ? null : "callbackPhone";
+      return this.say("contact", "P8", fired, "日程確定 → 連絡先の確認(P8)");
     }
-    return this.reply("来週でしたら、午前と午後どちらがよろしいですか？", "P7", fired, "開いた質問は使わず2択で聞き直す");
+    return this.repair(fired, "日程の可否を判定できず");
   }
 
   // ---------- P8: ヒアリング7項目 ----------
@@ -532,28 +589,46 @@ export class DialogEngine {
           notes.push(`${this.pending} を取得`);
         } else {
           // 取れなかった項目は次へ進めず聞き直す（G2 の担保）
-          return this.reply(this.askText(this.pending), "P8", fired, `${this.pending} が聞き取れず再質問`);
+          return this.speakOnly(
+            this.askText(this.pending),
+            "P8",
+            fired,
+            `${this.pending} が聞き取れず再質問`,
+          );
         }
       }
     }
+    this.unknownStreak = 0;
 
     const nextSlot = this.nextSlot();
     if (!nextSlot) {
       this.pending = null;
-      return this.reply(
-        PHASES.P9.mustSay.map((m) => m.replace(/^（[^）]*）/, "")).join(" "),
+      // 収録台本の締めにはカレンダー登録依頼が含まれていない。
+      // 実データで53%しか実施されていない項目で、このデモの主張そのものなので、
+      // 録音が無くても必ず1回入れる（DoD の「カレンダー登録を依頼した」を満たす）。
+      if (!this.state.calendarRequested) {
+        const sc = DEMO_SCENARIO;
+        return this.speakOnly(
+          `担当の予定の兼ね合いで、もし日程変更になりますと次回のご案内がかなり先になる可能性がございます。お手数ですが${sc.proposedDate}${sc.proposedTime}で、一旦カレンダーにご予定だけ入れておいていただけますと助かります。`,
+          "P8",
+          fired,
+          `${notes.join(" / ") || "取得完了"} → カレンダー登録依頼（録音なし・音声合成）`,
+        );
+      }
+      return this.say(
+        "closing",
         "P9",
         fired,
         `${notes.join(" / ") || "取得完了"} → 7項目＋連絡先が揃ったので締め(P9)`,
-        PHASE_AUDIO.P9,
       );
     }
     this.pending = nextSlot;
-    return this.reply(
+    // 収録台本に無い項目は音声合成で補う（画面にもそう出す）
+    return this.speakOnly(
       this.askText(nextSlot),
       "P8",
       fired,
-      `${notes.length > 0 ? notes.join(" / ") + " → " : ""}次は ${nextSlot}`,
+      `${notes.length > 0 ? notes.join(" / ") + " → " : ""}次は ${nextSlot}（録音なし・音声合成）`,
     );
   }
 
@@ -586,7 +661,7 @@ export class DialogEngine {
   private askText(slot: PendingSlot): string {
     switch (slot) {
       case "email":
-        return "会社概要とZoomのURLをお送りしたいのですが、メールアドレスを伺えますでしょうか？";
+        return "資料とオンライン会議のURLをお送りしたいのですが、メールアドレスを伺えますでしょうか？";
       case "emailConfirm":
         return `復唱させていただきます。${this.state.email} でお間違いないでしょうか？`;
       case "callbackPhone":
@@ -619,7 +694,10 @@ export class DialogEngine {
       case "H3": {
         const m = AGE_RE.exec(text);
         const age = m?.[1] ?? m?.[3];
-        return { facts: { H3: age ? `${age}歳` : text }, ok: Boolean(age) };
+        const era = AGE_ERA.exec(text)?.[1];
+        if (age) return { facts: { H3: `${age}歳` }, ok: true };
+        if (era) return { facts: { H3: `${era}代` }, ok: true };
+        return { facts: { H3: text }, ok: false };
       }
       case "H4":
         return { facts: { H4: count !== null ? `${count}名（${text}）` : text }, ok: count !== null };
@@ -654,14 +732,70 @@ export class DialogEngine {
     }
   }
 
+  // ---------- 想定外の発話への立て直し ----------
+
+  /**
+   * どの分岐にも当たらなかったときの処理。
+   *
+   * ここで無条件に読み上げへ落とすと、収録音声と合成音声が交互に出て会話が壊れる。
+   * そのため「言い直す → 最小の質問に切り替える → 日程に振る → 丁寧に終話」の順で、
+   * 収録済みの台本を使いながら会話を前に進める。
+   */
+  private repair(fired: GuardrailId[], reason: string): DialogReply {
+    this.unknownStreak++;
+    const anchor = PHASE_ANCHOR[this.state.phase];
+
+    // 1回目: 直前の質問をもう一度（電話では自然な立て直し）
+    if (this.unknownStreak === 1 && anchor) {
+      return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, { replay: true });
+    }
+    // 2回目: 答えやすい最小の質問（従業員数だけ）に切り替える
+    if (this.unknownStreak === 2 && !this.said.has("r1NoSystem")) {
+      this.expecting = "headcount";
+      return this.say("r1NoSystem", this.state.phase, fired, `${reason} → 最小の質問（人数）に切り替え`);
+    }
+    // 3回目: 内容の説明をやめて日程の話に振る
+    if (this.unknownStreak === 3 && !this.said.has("schedule")) {
+      return this.say("schedule", "P7", fired, `${reason} → 内容を離れて日程打診に切り替え`);
+    }
+    // それでも噛み合わなければ、痕跡を残して丁寧に終話する
+    return this.say("reject", "P0X", fired, `${reason} → 立て直せず丁寧に終話`);
+  }
+
   // ---------- 応答の確定（フィルタ・遷移検証・履歴） ----------
 
-  private reply(
+  /** 収録台本を1本読み上げる。画面表示テキストと音声は同じ定義から取る。 */
+  private say(
+    id: VoiceLineId,
+    proposed: PhaseId,
+    fired: GuardrailId[],
+    matched: string,
+    opts: { replay?: boolean } = {},
+  ): DialogReply {
+    const line = VOICE_LINES[id];
+    const alreadySaid = this.said.has(id);
+    this.said.add(id);
+    // 同じ録音は続けて流さない。ただし言い直しは同じ文言なので再生してよい。
+    const audioFile = !alreadySaid || opts.replay ? audioUrl(line.file) : undefined;
+    return this.emit(line.text, proposed, fired, matched, audioFile);
+  }
+
+  /** 収録の無い発話（P8 の個別質問など）。音声合成で読み上げる。 */
+  private speakOnly(
     raw: string,
     proposed: PhaseId,
     fired: GuardrailId[],
     matched: string,
-    audio?: string,
+  ): DialogReply {
+    return this.emit(raw, proposed, fired, matched, undefined);
+  }
+
+  private emit(
+    raw: string,
+    proposed: PhaseId,
+    fired: GuardrailId[],
+    matched: string,
+    audioFile: string | undefined,
   ): DialogReply {
     // 出力前フィルタ（設計書 §6）。定型文ベースでも必ず通す。
     const fixed = autoFix(raw);
@@ -675,13 +809,6 @@ export class DialogEngine {
 
     const forbidEnd = (Object.keys(GUARDRAILS) as GuardrailId[]).filter((id) => GUARDRAILS[id].forbidEnd);
     const t = resolveTransition(this.state, proposed, fired, forbidEnd);
-
-    // 同じ録音を二度流さない。2回目は画面側の TTS にフォールバックする
-    let audioFile: string | undefined;
-    if (audio && !this.playedAudio.has(audio)) {
-      this.playedAudio.add(audio);
-      audioFile = audioUrl(audio);
-    }
 
     this.state.turns.push({
       index: this.state.turns.length,
