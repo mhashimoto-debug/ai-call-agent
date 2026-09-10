@@ -301,9 +301,21 @@ export function isContactNameAsked(text: string): boolean {
  * タイプB では取次ぎ成功として人間へ引き継ぐサインになり、
  * タイプA では「受付を突破して本人に繋がった」合図として概要説明へ進む。
  * 判定を1箇所にまとめて、両モードでずれないようにしている。
+ *
+ * 音声認識は「私 です」「私、です」のように区切りを入れたり、
+ * 「ぼくです」「ワタシです」のようにかなで返したりするため、どちらでも拾えるようにしている。
+ * 「私では分かりません」（決裁権なし）は「で」の後ろが続かないので当たらない。
  */
-export const SELF_IDENTIFIED =
-  /(私|わたくし|わたし|僕|自分|当方)(です|ですが|ですけど|ですよ)|(私|わたくし|わたし|僕|自分|当方)が(担当|窓口|責任者|やって|見て)|(担当|窓口)(です|ですが|ですけど)|(私|わたくし|僕|自分|当方)で(お伺い|伺い|承り|お受け|大丈夫|結構)/;
+const SELF_WORD = "(?:私|わたくし|わたし|ワタシ|僕|ぼく|ボク|俺|おれ|オレ|自分|じぶん|当方)";
+const SELF_SEP = "[\\s、，,]*";
+export const SELF_IDENTIFIED = new RegExp(
+  [
+    `${SELF_WORD}${SELF_SEP}(?:です|でございます)`,
+    `${SELF_WORD}${SELF_SEP}が${SELF_SEP}(?:担当|窓口|責任者|やって|見て|そうです)`,
+    `(?:担当|窓口)${SELF_SEP}です`,
+    `${SELF_WORD}${SELF_SEP}で${SELF_SEP}(?:お伺い|伺い|承り|お受け|大丈夫|結構)`,
+  ].join("|"),
+);
 
 /** 相手が電話口に出た合図（受付の名乗り・相槌）。 */
 const ANSWERED_CALL =
@@ -495,6 +507,12 @@ export class DialogEngine {
   private hpDeflections = 0;
   /** 一度でも HP 参照があったか。以後はメールアドレスの催促をしない。 */
   private hpReferenced = false;
+  /**
+   * HP 参照の切り返し（オンラインでのご挨拶の打診）を流したターンの位置。
+   * 受付段階では日程フェーズへ進めないため、直後の「大丈夫です」をフェーズでは
+   * 承諾と判別できない。打診の直後かどうかをこれで見る。
+   */
+  private meetingOfferedAt = -1;
   /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
   private publicBodyCorrected = false;
   /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -711,8 +729,11 @@ export class DialogEngine {
         return this.absentFollowUp(text, fired);
       }
     }
-    // R1: 「制度がない」は断りではなく最も見込みが高いホットサイン
-    if (has("R1")) {
+    // R1: 「制度がない」は断りではなく最も見込みが高いホットサイン。
+    // ただし P8 では「iDeCo はされていますか」「退職金制度は？」への回答として
+    // 「特にやってません」が返ってくるのが普通なので、切り返しを流さず回答として受け取る
+    // （流すと取得済みの従業員数を聞き直すことになり、ヒアリングが止まる）
+    if (has("R1") && this.state.phase !== "P8") {
       this.unknownStreak = 0;
       this.expecting = "headcount";
       const reply = this.guardrailReply(
@@ -1213,6 +1234,7 @@ export class DialogEngine {
       return this.say("reject", this.toPhase("P0X"), fired, "2回続けてHP参照で回避 → 粘らず丁寧に終話");
     }
     this.refusalStreak++;
+    this.meetingOfferedAt = this.state.turns.length;
     return this.speakOnly(
       `承知いたしました！では弊社にてサイトより確認させていただきますね。差し支えなければ、${DEMO_SCENARIO.contactTitle}様と一度${DEMO_SCENARIO.meetingMinutes}分ほどオンラインでご挨拶だけでもお時間いただけないでしょうか？`,
       this.toPhase("P7"),
@@ -1240,8 +1262,18 @@ export class DialogEngine {
     }
     if (DECLINE.test(text)) return true;
     if (/大丈夫/.test(text)) {
-      const scheduling = phase === "P6" || phase === "P7";
+      // オンラインでのご挨拶を打診した直後の「大丈夫です」は、日程の可否への返事として読む
+      const scheduling = phase === "P6" || phase === "P7" || this.justOfferedMeeting();
       return !scheduling && !SCHEDULE_CONTEXT.test(text);
+    }
+    return false;
+  }
+
+  /** 直前の AI 発話が、HP 参照の切り返し（オンラインでのご挨拶の打診）だったか。 */
+  private justOfferedMeeting(): boolean {
+    for (let i = this.state.turns.length - 1; i >= 0; i--) {
+      if (this.state.turns[i]?.speaker !== "agent") continue;
+      return i === this.meetingOfferedAt;
     }
     return false;
   }

@@ -1023,7 +1023,16 @@
     if (!isContactGuard(text)) return false;
     return /(担当者名|お名前|名前|氏名|誰宛|どなた宛)/.test(text);
   }
-  var SELF_IDENTIFIED = /(私|わたくし|わたし|僕|自分|当方)(です|ですが|ですけど|ですよ)|(私|わたくし|わたし|僕|自分|当方)が(担当|窓口|責任者|やって|見て)|(担当|窓口)(です|ですが|ですけど)|(私|わたくし|僕|自分|当方)で(お伺い|伺い|承り|お受け|大丈夫|結構)/;
+  var SELF_WORD = "(?:\u79C1|\u308F\u305F\u304F\u3057|\u308F\u305F\u3057|\u30EF\u30BF\u30B7|\u50D5|\u307C\u304F|\u30DC\u30AF|\u4FFA|\u304A\u308C|\u30AA\u30EC|\u81EA\u5206|\u3058\u3076\u3093|\u5F53\u65B9)";
+  var SELF_SEP = "[\\s\u3001\uFF0C,]*";
+  var SELF_IDENTIFIED = new RegExp(
+    [
+      `${SELF_WORD}${SELF_SEP}(?:\u3067\u3059|\u3067\u3054\u3056\u3044\u307E\u3059)`,
+      `${SELF_WORD}${SELF_SEP}\u304C${SELF_SEP}(?:\u62C5\u5F53|\u7A93\u53E3|\u8CAC\u4EFB\u8005|\u3084\u3063\u3066|\u898B\u3066|\u305D\u3046\u3067\u3059)`,
+      `(?:\u62C5\u5F53|\u7A93\u53E3)${SELF_SEP}\u3067\u3059`,
+      `${SELF_WORD}${SELF_SEP}\u3067${SELF_SEP}(?:\u304A\u4F3A\u3044|\u4F3A\u3044|\u627F\u308A|\u304A\u53D7\u3051|\u5927\u4E08\u592B|\u7D50\u69CB)`
+    ].join("|")
+  );
   var ANSWERED_CALL = /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
   var PERSON_PHRASES = [
     [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
@@ -1136,6 +1145,12 @@
     hpDeflections = 0;
     /** 一度でも HP 参照があったか。以後はメールアドレスの催促をしない。 */
     hpReferenced = false;
+    /**
+     * HP 参照の切り返し（オンラインでのご挨拶の打診）を流したターンの位置。
+     * 受付段階では日程フェーズへ進めないため、直後の「大丈夫です」をフェーズでは
+     * 承諾と判別できない。打診の直後かどうかをこれで見る。
+     */
+    meetingOfferedAt = -1;
     /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
     publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -1308,7 +1323,7 @@
           return this.absentFollowUp(text, fired);
         }
       }
-      if (has("R1")) {
+      if (has("R1") && this.state.phase !== "P8") {
         this.unknownStreak = 0;
         this.expecting = "headcount";
         const reply = this.guardrailReply(
@@ -1737,6 +1752,7 @@
         return this.say("reject", this.toPhase("P0X"), fired, "2\u56DE\u7D9A\u3051\u3066HP\u53C2\u7167\u3067\u56DE\u907F \u2192 \u7C98\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
       }
       this.refusalStreak++;
+      this.meetingOfferedAt = this.state.turns.length;
       return this.speakOnly(
         `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${DEMO_SCENARIO.contactTitle}\u69D8\u3068\u4E00\u5EA6${DEMO_SCENARIO.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`,
         this.toPhase("P7"),
@@ -1760,8 +1776,16 @@
       }
       if (DECLINE.test(text)) return true;
       if (/大丈夫/.test(text)) {
-        const scheduling = phase === "P6" || phase === "P7";
+        const scheduling = phase === "P6" || phase === "P7" || this.justOfferedMeeting();
         return !scheduling && !SCHEDULE_CONTEXT.test(text);
+      }
+      return false;
+    }
+    /** 直前の AI 発話が、HP 参照の切り返し（オンラインでのご挨拶の打診）だったか。 */
+    justOfferedMeeting() {
+      for (let i = this.state.turns.length - 1; i >= 0; i--) {
+        if (this.state.turns[i]?.speaker !== "agent") continue;
+        return i === this.meetingOfferedAt;
       }
       return false;
     }
