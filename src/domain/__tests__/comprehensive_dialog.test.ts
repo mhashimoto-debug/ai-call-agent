@@ -11,7 +11,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AUDIO_BASE, DialogEngine, VOICE_LINES, type DialogReply } from "../../demo/dialogEngine.js";
+import {
+  AUDIO_BASE,
+  DialogEngine,
+  isContactGuard,
+  VOICE_LINES,
+  type DialogReply,
+} from "../../demo/dialogEngine.js";
 import { createCallState, type CallState } from "../state.js";
 import { detectGuardrails } from "../guardrails.js";
 import type { PhaseId } from "../types.js";
@@ -491,6 +497,7 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
     "090-1234-5678 です", "ふーん", "えーっと", "……", "うーん", "よく分からん",
     "ホームページに載ってます", "HPを見てください", "サイトに出てます", "サイト通りです",
     "担当者のお名前はお分かりでしょうか", "誰に繋げばいいですか", "どこの部署ですか",
+    "担当者名 お分かりでしょうか", "名前わかりますか", "担当 誰",
   ];
 
   // 再現できるよう擬似乱数は固定シードで回す
@@ -678,4 +685,57 @@ test("HP参照: 「サイト通りです」も回避として扱い、初期の�
   assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text, "初期の切り返しへ巻き戻っている");
   assert.notEqual(r.utterance, VOICE_LINES.greeting.text);
   assert.match(r.utterance, /サイトより確認/);
+});
+
+// ============================================================
+// 13. 受付ガード: 助詞なし・スペース区切りの言い回し
+// ============================================================
+
+const LOOSE_CONTACT_CASES: string[] = [
+  "担当者名 お分かりでしょうか",
+  "担当者名お分かりですか",
+  "担当者名は",
+  "名前わかりますか",
+  "お名前 教えてください",
+  "担当者わかりません",
+  "担当者 知らないです",
+  "担当 誰",
+  "誰か分かりますか",
+  "どなた宛",
+  "担当者名 教えて",
+  "部署 分かりますか",
+];
+
+for (const text of LOOSE_CONTACT_CASES) {
+  test(`受付ガード(助詞なし): 「${text}」を担当名確認として拾う`, () => {
+    assert.ok(isContactGuard(text), "担当名確認として検知されない");
+
+    const call = new Call();
+    const r = call.say(text);
+    assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `挨拶を繰り返している: ${r.matched}`);
+    assert.notEqual(r.utterance, VOICE_LINES.overview.text, `概要説明に流れている: ${r.matched}`);
+    assert.doesNotMatch(r.matched, /判定できず|読み取れず/, `判定できずに聞き直している: ${r.matched}`);
+    assert.match(r.utterance, /個人名ではなく/);
+    assert.match(r.utterance, /(人事|総務)/);
+    assert.match(r.utterance, /代表者様/);
+  });
+}
+
+test("受付ガード: 取次ぎの申し出は担当名確認として扱わない", () => {
+  for (const text of [
+    "少々お待ちください",
+    "担当に代わりますね",
+    "確認してまいります",
+    "担当の者に伝えておきます",
+    "はい、私が担当です",
+    "担当は不在です",
+  ]) {
+    assert.ok(!isContactGuard(text), `担当名確認として誤検知している: ${text}`);
+  }
+});
+
+test("受付ガード: 取次ぎ先を尋ねる疑問形は、取次ぎ語を含んでいても拾う", () => {
+  for (const text of ["どなたにお繋ぎすればよいですか", "どちらの部署におつなぎすれば？"]) {
+    assert.ok(isContactGuard(text), `取次ぎ先の質問を拾えていない: ${text}`);
+  }
 });

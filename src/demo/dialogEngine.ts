@@ -252,13 +252,48 @@ const POSTED_ELSEWHERE =
  * これを用件確認（ご用件は？）と取り違えると概要説明を流してしまい、
  * ヒアリングに進むと相手の質問を無視した形になる。挨拶の繰り返しも噛み合わない。
  * こちらが名指しできない以上、部署・役職で取次ぎ先を示すしかない。
+ *
+ * 判定は助詞に依存させない。音声認識では助詞が落ちたり空白が入ったりするため
+ * （「担当者名 お分かりでしょうか」「名前わかりますか」）、
+ * 「誰のことを話しているか」を示す語と「分からない・教えてほしい」を示す語の
+ * 組み合わせで見る。
  */
-export const CONTACT_UNKNOWN =
-  /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(担当|窓口|部署)(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|決まって|いらっしゃら)|(誰|どなた)(に|へ|宛て?)?\s*(お)?(繋|つな|回|伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+/** 疑問・不明を示す語。取次ぎの申し出と、取次ぎ先の質問を切り分けるために使う。 */
+const CONTACT_INTERROGATIVE = /(誰|どなた|どこ|どちら|何|なん|分か|わか|存じ|知ら|不明|教え)/;
+
+/** 取次ぎ先そのものを指す語（疑問詞を除く）。 */
+const CONTACT_TARGET = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名)/;
+
+/** 取次ぎ先を話題にしている語。 */
+const CONTACT_SUBJECT = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名|誰|どなた)/;
+
+/** 「分からない・教えてほしい」に相当する語。 */
+const CONTACT_QUERY =
+  /(分か|わか|判ら|知ら|存じ|確認|聞(き|け|い|く)|教え|どちら|なんて|何て|不明|いらっしゃ|でしょうか|ですか)/;
+
+/** 単独で取次ぎ先の確認とみなせる言い回し。 */
+const CONTACT_STANDALONE =
+  /(担当部署|担当窓口|担当者名|(どこ|どちら|何)\s*(の)?\s*(部署|課|担当|窓口)|(誰|どなた)\s*(に|へ|宛て?)?\s*(お)?(伝え|繋|つな|回|渡)|誰宛|どなた宛)/;
+
+/**
+ * 「担当者名を教えてほしい／誰に繋げばいいか分からない」型かどうか。
+ * 助詞やスペースの有無に依存しない。
+ */
+export function isContactGuard(text: string): boolean {
+  // 「担当に確認してまいります」のような取次ぎの申し出は対象外（取次ぎ成功のサイン）。
+  // ただし「どなたにお繋ぎすれば？」は取次ぎ先を尋ねているので、疑問形なら対象に含める
+  if (TRANSFER.test(text) && !CONTACT_INTERROGATIVE.test(text)) return false;
+  if (CONTACT_STANDALONE.test(text)) return true;
+  // 「担当 誰」のように疑問詞だけで聞かれる場合も取次ぎ先の確認
+  if (CONTACT_TARGET.test(text) && /(誰|どなた)/.test(text)) return true;
+  return CONTACT_SUBJECT.test(text) && CONTACT_QUERY.test(text);
+}
 
 /** そのうち「担当者の名前」を尋ねられているもの。 */
-export const CONTACT_NAME_ASKED =
-  /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(誰|どなた)宛|誰宛て/;
+export function isContactNameAsked(text: string): boolean {
+  if (!isContactGuard(text)) return false;
+  return /(担当者名|お名前|名前|氏名|誰宛|どなた宛)/.test(text);
+}
 
 /** 相手が電話口に出た合図（受付の名乗り・相槌）。 */
 const ANSWERED_CALL =
@@ -442,6 +477,8 @@ export class DialogEngine {
   private recapped = new Set<VoiceLineId>();
   /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
   private replayed = new Set<VoiceLineId>();
+  /** 資料を郵送に切り替える案内を済ませたか。同じ案内を繰り返さないために持つ。 */
+  private postalOffered = false;
   /** 取次ぎ先を尋ね返された回数。2回目は食い下がらない。 */
   private contactUnknownAsks = 0;
   /** 「ホームページを見て」と言われた回数。2回目は食い下がらない。 */
@@ -527,7 +564,7 @@ export class DialogEngine {
 
     // 「担当者のお名前は？」「誰に繋げば？」は用件確認でもヒアリングでもない。
     // 概要説明・人数確認・挨拶の繰り返しに落とさず、部署と役職で取次ぎ先を示す
-    if (CONTACT_UNKNOWN.test(text)) return this.handleContactUnknown(fired);
+    if (this.isContactGuard(text)) return this.handleContactUnknown(fired);
 
     // 「ホームページに載っています」は資料請求ではなく回避。
     // 断り判定より先に見て、メールアドレスの催促に入らないようにする
@@ -802,7 +839,9 @@ export class DialogEngine {
       got.push("email");
     }
 
-    if (got.length === 0 && EMAIL_UNAVAILABLE.test(text)) {
+    // 郵送への切り替えは1回だけ。二度言われたら同じ案内を繰り返さず先へ進める
+    if (got.length === 0 && EMAIL_UNAVAILABLE.test(text) && !this.postalOffered) {
+      this.postalOffered = true;
       this.unknownStreak = 0;
       return this.speakOnly(
         this.state.hearing.H7
@@ -1112,6 +1151,13 @@ export class DialogEngine {
    * 部署（人事・総務・福利厚生）と役職（代表者）で取次ぎ先を示して、
    * 相手が動ける形にして返す。フェーズは進めない（まだ担当者に届いていないため）。
    */
+  /** 受付ガードとして扱う場面か（ヒアリング中は質問への回答なので見ない）。 */
+  private isContactGuard(text: string): boolean {
+    const phase = this.state.phase;
+    if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
+    return isContactGuard(text);
+  }
+
   private handleContactUnknown(fired: GuardrailId[]): DialogReply {
     this.contactUnknownAsks++;
     this.unknownStreak = 0;

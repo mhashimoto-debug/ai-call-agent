@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   detectAbsence,
+  detectContactGuard,
   detectHandover,
   TransferEngine,
   type TransferReply,
@@ -250,4 +251,40 @@ test("タイプB 担当者名: 提示のあとに本人が出たら引き継ぐ"
   engine.respond("担当者のお名前はお分かりでしょうか");
   const r = engine.respond("あ、私が担当ですが");
   assert.equal(r.handover, true);
+});
+
+// ---------- 助詞なし・スペース区切り ----------
+
+const LOOSE_NAME_CASES = [
+  "担当者名 お分かりでしょうか",
+  "担当者名お分かりですか",
+  "担当者名は",
+  "名前わかりますか",
+  "お名前 教えてください",
+  "担当者わかりません",
+  "担当 誰",
+  "誰か分かりますか",
+  "部署 分かりますか",
+];
+
+for (const text of LOOSE_NAME_CASES) {
+  test(`タイプB 受付ガード(助詞なし): 「${text}」で挨拶を繰り返さない`, () => {
+    assert.ok(detectContactGuard(text), "担当名確認として検知されない");
+
+    const { engine, first } = fresh();
+    const r = engine.respond(text);
+    assert.notEqual(r.utterance, first.utterance, `挨拶を繰り返している: ${r.matched}`);
+    assert.notEqual(r.utterance, VOICE_LINES.greeting.text);
+    assert.notEqual(r.utterance, VOICE_LINES.overview.text, `概要説明に流れている: ${r.matched}`);
+    assert.doesNotMatch(r.matched, /取次ぎに至らず/, `取次ぎ失敗として扱っている: ${r.matched}`);
+    assert.match(r.utterance, /(人事|総務)/);
+    assert.match(r.utterance, /代表者様/);
+    assert.equal(engine.finished, false);
+  });
+}
+
+test("タイプB 受付ガード: 担当者名を聞かれた場合は「特定のお名前ではなく」と返す", () => {
+  const { engine } = fresh();
+  const r = engine.respond("担当者名 お分かりでしょうか");
+  assert.match(r.utterance, /特定のお名前ではなく/);
 });

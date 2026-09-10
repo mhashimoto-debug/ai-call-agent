@@ -13,8 +13,8 @@
 import {
   ABSENT_NOW,
   ASK_PURPOSE,
-  CONTACT_NAME_ASKED,
-  CONTACT_UNKNOWN,
+  isContactGuard,
+  isContactNameAsked,
   REFUSE_SALES,
   RETURN_TIME,
   VOICE_LINES,
@@ -85,13 +85,13 @@ export const HANDOVER_PATTERNS: RegExp[] = [
 ];
 
 /**
- * 「担当者の名前は？」「誰に繋げばいいか分からない」という応答。
+ * 「担当者の名前は？」「誰に繋げばいいか分からない」という応答の検知。
  *
  * ここで取次ぎ依頼や用件説明をそのまま繰り返しても相手は動けない。
  * 具体的な部署・役職を挙げて、取次ぎ先を決められる形にして返す必要がある。
  * 判定は タイプA と同じものを使う（受付の反応はモードによらないため）。
  */
-export const UNKNOWN_CONTACT = CONTACT_UNKNOWN;
+export const detectContactGuard = isContactGuard;
 
 /**
  * 用件を重ねて確認された、と読む言い回し。
@@ -171,11 +171,11 @@ export class TransferEngine {
     }
 
     // 4. 「誰に繋げばいいか分からない」には、挨拶を繰り返さず具体的な取次ぎ先を挙げる
-    if (UNKNOWN_CONTACT.test(text)) {
+    if (isContactGuard(text)) {
       if (!this.departmentSuggested) {
         this.departmentSuggested = true;
         // 名前を尋ねられている場合は「名前では答えられない」ことを先に伝える
-        return CONTACT_NAME_ASKED.test(text)
+        return isContactNameAsked(text)
           ? this.speak(
               "失礼いたしました！特定のお名前ではなく、人事・総務のご担当者様か代表者様にお繋ぎいただけますでしょうか？",
               "担当者名の確認 → 部署・役職を指定して取次ぎを再依頼",

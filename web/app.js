@@ -1008,8 +1008,21 @@
   var SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
   var HP_REFERENCE = /(ホームページ|ＨＰ|HP|ウェブ|Web|ウェブサイト|サイト|ネット|インターネット|オンライン上|URL|ＵＲＬ|弊社サイト)[^。]{0,16}(見|ご覧|載って|掲載|出て|ござい|あります|ありま|確認|調べ|検索|参照)/i;
   var POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)|(ホームページ|ＨＰ|HP|サイト|ウェブ|ネット)[^。]{0,6}(通り|とおり|の通り)/i;
-  var CONTACT_UNKNOWN = /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(担当|窓口|部署)(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|決まって|いらっしゃら)|(誰|どなた)(に|へ|宛て?)?\s*(お)?(繋|つな|回|伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
-  var CONTACT_NAME_ASKED = /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(誰|どなた)宛|誰宛て/;
+  var CONTACT_INTERROGATIVE = /(誰|どなた|どこ|どちら|何|なん|分か|わか|存じ|知ら|不明|教え)/;
+  var CONTACT_TARGET = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名)/;
+  var CONTACT_SUBJECT = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名|誰|どなた)/;
+  var CONTACT_QUERY = /(分か|わか|判ら|知ら|存じ|確認|聞(き|け|い|く)|教え|どちら|なんて|何て|不明|いらっしゃ|でしょうか|ですか)/;
+  var CONTACT_STANDALONE = /(担当部署|担当窓口|担当者名|(どこ|どちら|何)\s*(の)?\s*(部署|課|担当|窓口)|(誰|どなた)\s*(に|へ|宛て?)?\s*(お)?(伝え|繋|つな|回|渡)|誰宛|どなた宛)/;
+  function isContactGuard(text) {
+    if (TRANSFER.test(text) && !CONTACT_INTERROGATIVE.test(text)) return false;
+    if (CONTACT_STANDALONE.test(text)) return true;
+    if (CONTACT_TARGET.test(text) && /(誰|どなた)/.test(text)) return true;
+    return CONTACT_SUBJECT.test(text) && CONTACT_QUERY.test(text);
+  }
+  function isContactNameAsked(text) {
+    if (!isContactGuard(text)) return false;
+    return /(担当者名|お名前|名前|氏名|誰宛|どなた宛)/.test(text);
+  }
   var ANSWERED_CALL = /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
   var PERSON_PHRASES = [
     [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
@@ -1114,6 +1127,8 @@
     recapped = /* @__PURE__ */ new Set();
     /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
     replayed = /* @__PURE__ */ new Set();
+    /** 資料を郵送に切り替える案内を済ませたか。同じ案内を繰り返さないために持つ。 */
+    postalOffered = false;
     /** 取次ぎ先を尋ね返された回数。2回目は食い下がらない。 */
     contactUnknownAsks = 0;
     /** 「ホームページを見て」と言われた回数。2回目は食い下がらない。 */
@@ -1176,7 +1191,7 @@
       if (this.absentMode && !this.state.ended) {
         return this.absentFollowUp(text, fired);
       }
-      if (CONTACT_UNKNOWN.test(text)) return this.handleContactUnknown(fired);
+      if (this.isContactGuard(text)) return this.handleContactUnknown(fired);
       if (this.isHpReference(text)) return this.handleHpReference(fired);
       if (this.isDecline(text)) {
         this.refusalStreak++;
@@ -1406,7 +1421,8 @@
       if (this.state.email && !got.includes("email") && EMAIL_RE.test(text.replace(/\s/g, ""))) {
         got.push("email");
       }
-      if (got.length === 0 && EMAIL_UNAVAILABLE.test(text)) {
+      if (got.length === 0 && EMAIL_UNAVAILABLE.test(text) && !this.postalOffered) {
+        this.postalOffered = true;
         this.unknownStreak = 0;
         return this.speakOnly(
           this.state.hearing.H7 ? "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u304A\u9001\u308A\u3044\u305F\u3057\u307E\u3059\u3002" : "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u3082\u304A\u9001\u308A\u3067\u304D\u307E\u3059\u3002",
@@ -1675,6 +1691,12 @@
      * 部署（人事・総務・福利厚生）と役職（代表者）で取次ぎ先を示して、
      * 相手が動ける形にして返す。フェーズは進めない（まだ担当者に届いていないため）。
      */
+    /** 受付ガードとして扱う場面か（ヒアリング中は質問への回答なので見ない）。 */
+    isContactGuard(text) {
+      const phase = this.state.phase;
+      if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
+      return isContactGuard(text);
+    }
     handleContactUnknown(fired) {
       this.contactUnknownAsks++;
       this.unknownStreak = 0;
@@ -1956,7 +1978,6 @@
     /(担当|責任者|代表|社長)(の者)?(です|でございます)/,
     /お電話代わりました/
   ];
-  var UNKNOWN_CONTACT = CONTACT_UNKNOWN;
   var PURPOSE_FOLLOWUP = /(具体的|内容|詳し|中身|どんな話|なんの話|何の話|要する|どういうこと)/;
   function detectHandover(text) {
     return HANDOVER_PATTERNS.some((p) => p.test(text));
@@ -2013,10 +2034,10 @@
           blocked: []
         };
       }
-      if (UNKNOWN_CONTACT.test(text)) {
+      if (isContactGuard(text)) {
         if (!this.departmentSuggested) {
           this.departmentSuggested = true;
-          return CONTACT_NAME_ASKED.test(text) ? this.speak(
+          return isContactNameAsked(text) ? this.speak(
             "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7279\u5B9A\u306E\u304A\u540D\u524D\u3067\u306F\u306A\u304F\u3001\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u306E\u3054\u62C5\u5F53\u8005\u69D8\u304B\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
             "\u62C5\u5F53\u8005\u540D\u306E\u78BA\u8A8D \u2192 \u90E8\u7F72\u30FB\u5F79\u8077\u3092\u6307\u5B9A\u3057\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
             fired
