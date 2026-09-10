@@ -209,7 +209,7 @@ const SCHEDULE_NG =
   /(都合が悪|都合つか|都合がつか|予定が入って|埋まって|ふさがって|塞がって|空いて(ない|いない|ませ)|厳しい|難しい|無理です|無理かな|出張(で|が|に)|休みで|定休|別の日|他の日|ほかの日|再来週|変更|ずらし|遅らせ|もう少し先)/;
 /** 日程に同意した。 */
 const SCHEDULE_OK =
-  /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解)/;
+  /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解|調整し|都合つけ|押さえて|空けておき|みてみます)/;
 /**
  * R7 のうち「本人が今いない」ケース。決裁権なしとは切り返しが変わるので分ける。
  * R7 が発火した発話にだけ当てるので、広めに取ってよい。
@@ -227,10 +227,29 @@ const RETURN_TIME =
  * ヒアリングの進行より先に判定する（進めると会話が噛み合わなくなる）。
  */
 const DECLINE =
-  /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|入って(ます|おり)ます|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
+  /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|(?:保険|制度|共済|年金|中退共|DC)[^。]{0,6}入って(ます|おり|いる)|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|いらない|要らない|いらん|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
 
 /** 「大丈夫」を肯定と読んでよい文脈（日程の可否を答えている場面）。 */
 const SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
+
+/** 相手が電話口に出た合図（受付の名乗り・相槌）。 */
+const ANSWERED_CALL =
+  /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
+
+/**
+ * 数字を伴わない人数表現。
+ * 小規模企業では「私と妻だけ」「私一人」という答え方が多く、数字が出てこない。
+ */
+const PERSON_PHRASES: [RegExp, number][] = [
+  [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
+  [/夫婦(で|だけ|二人|2人)?/, 2],
+  [/(私|自分|わたし)(だけ|一人|ひとり)/, 1],
+  [/(一人|ひとり|1人)(だけ|です|ですね|でやって)/, 1],
+];
+
+/** メールでは受け取れない、という申し出。 */
+const EMAIL_UNAVAILABLE =
+  /(メール|アドレス)[^。]{0,12}(苦手|使って(ない|いない|おりませ|ません)|持って(ない|いない|おりませ)|見ない|分からない|わからない|やってない)/;
 
 /** 時間帯の指定。2択に答えたとみなす。 */
 const TIME_SLOT =
@@ -290,6 +309,12 @@ export function toNumber(raw: string): number | null {
   const ones = onesPart === "" ? 0 : KANJI_DIGITS.indexOf(onesPart);
   if (tens < 0 || ones < 0) return null;
   return tens * 10 + ones;
+}
+
+/** 数字のない人数表現から人数を読む（「私と妻だけです」→ 2）。 */
+export function phraseCount(text: string): number | null {
+  for (const [pattern, count] of PERSON_PHRASES) if (pattern.test(text)) return count;
+  return null;
 }
 
 /** 1つ目にマッチしたパターンの数値を返す。 */
@@ -371,8 +396,11 @@ export class DialogEngine {
   private absentMode = false;
   /** 不在対応で何ターン粘ったか。確認が取れないまま長引かせないための上限。 */
   private absentTurns = 0;
-  /** 連続して断られた回数。2回続いたら食い下がらない。 */
-  private declineStreak = 0;
+  /**
+   * 連続して拒絶された回数（多忙・断りをまとめて数える）。
+   * 種類が違っても2回続けて断られた時点で食い下がらない。
+   */
+  private refusalStreak = 0;
   /** 直前に流した収録台本。言い直しはフェーズではなくこれを基準にする。 */
   private lastLine: VoiceLineId | null = null;
 
@@ -391,6 +419,9 @@ export class DialogEngine {
       if (!this.state.firedGuardrails.includes(g)) this.state.firedGuardrails.push(g);
     }
 
+    // 拒絶（多忙・断り）が続いているかを先に確定させる。種類をまたいで数える
+    if (!fired.includes("R2") && !this.isDecline(text)) this.refusalStreak = 0;
+
     // まとめ聞き対応: 質問していない項目でも、言われた時点で拾って保持する
     this.harvested = this.harvest(text);
     // 切り返しで投げた質問への回答は、フェーズに関係なくここで回収する
@@ -398,6 +429,20 @@ export class DialogEngine {
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
+
+    // 切り返しで聞いた従業員数が取れたら、そのまま次の質問（決算月・メール）へ進む。
+    // これは断り判定より先に見る。「20名でやってます」のような回答を
+    // 「やってます＝断り」と取り違えると、答えているのに会話が止まってしまう。
+    if (collected === "headcount") {
+      this.unknownStreak = 0;
+      this.refusalStreak = 0;
+      return this.say(
+        "hearingFiscalEmail",
+        this.toPhase("P5"),
+        fired,
+        "切り返しへの回答から H5 を取得 → 決算月と送付先メールアドレスへ",
+      );
+    }
 
     // R2 の直後にまた「忙しい」と言われた場合は、食い下がらず丁寧に終話する
     if (fired.includes("R2") && this.busyPitchDone) {
@@ -412,21 +457,8 @@ export class DialogEngine {
 
     // 断り・導入済みの申し出は、ヒアリングの進行より先に判定する
     if (this.isDecline(text)) {
-      this.declineStreak++;
+      this.refusalStreak++;
       return this.handleDecline(fired);
-    }
-    this.declineStreak = 0;
-
-    // 切り返しで聞いた従業員数が取れたら、そのまま次の質問（決算月・メール）へ進む。
-    // ここで通常のフェーズ処理に渡すと、受付段階のままなので「判定できず」になってしまう。
-    if (collected === "headcount") {
-      this.unknownStreak = 0;
-      return this.say(
-        "hearingFiscalEmail",
-        this.toPhase("P5"),
-        fired,
-        "切り返しへの回答から H5 を取得 → 決算月と送付先メールアドレスへ",
-      );
     }
 
     switch (this.state.phase) {
@@ -489,7 +521,9 @@ export class DialogEngine {
     if (!this.expecting) return null;
     if (this.expecting === "headcount") {
       // 「20名です」「10人くらい」のように数だけ返ってくるので、文脈語は要求しない
-      const n = this.state.hearing.H5 ? null : toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+      const n = this.state.hearing.H5
+        ? null
+        : (toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text));
       if (n === null || n <= 0) return null;
       applyExtracted(this.state, { H5: `${n}名` });
       if (!this.harvested.includes("H5")) this.harvested.push("H5");
@@ -571,6 +605,11 @@ export class DialogEngine {
     // ただし再生は1通話1回だけ（2回目以降は afterBusy で質問側へ進める）
     if (has("R2") && !this.busyPitchDone) {
       this.unknownStreak = 0;
+      this.refusalStreak++;
+      // すでに一度断られていれば、多忙で食い下がらずに終話する
+      if (this.refusalStreak >= 2) {
+        return this.say("reject", this.toPhase("P0X"), fired, "2回連続の拒絶 → 食い下がらず丁寧に終話");
+      }
       this.expecting = "headcount";
       this.busyPitchDone = true;
       // 新台本の R2 は仮押さえではなく「30秒で要点＋人数確認」なので、
@@ -597,6 +636,11 @@ export class DialogEngine {
         TRANSFER.test(text) ? "取次ぎ発生 → 法改正の概要" : "用件を問われた → 法改正の概要",
       );
     }
+    // 「はい、○○です」「もしもし」など、相手が電話口に出た合図には概要を伝える
+    if (YES.test(text) || ANSWERED_CALL.test(text)) {
+      this.unknownStreak = 0;
+      return this.say("overview", "P1", fired, "相手が応答 → 法改正の概要");
+    }
     return this.repair(fired, "受付の反応を判定できず");
   }
 
@@ -614,7 +658,7 @@ export class DialogEngine {
 
     // 「20人くらい」「50代です」のように文脈語が無い回答も、この場面なら受け取れる
     if (!this.state.hearing.H5) {
-      const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+      const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text);
       if (n !== null && n > 0) {
         applyExtracted(this.state, { H5: `${n}名` });
         got.push("H5");
@@ -653,6 +697,17 @@ export class DialogEngine {
       got.push("email");
     }
 
+    if (got.length === 0 && EMAIL_UNAVAILABLE.test(text)) {
+      this.unknownStreak = 0;
+      return this.speakOnly(
+        this.state.hearing.H7
+          ? "承知いたしました。それでは資料は郵送でお送りいたします。"
+          : "承知いたしました。それでは、御社の決算月だけ伺えますでしょうか？資料は郵送でもお送りできます。",
+        this.state.phase,
+        fired,
+        "メールが使えない → 郵送に切り替えて決算月のみ確認",
+      );
+    }
     if (got.length === 0 && !YES.test(text)) {
       return this.repair(fired, "決算月・メールアドレスの回答として読み取れず");
     }
@@ -668,6 +723,29 @@ export class DialogEngine {
 
   /** P6/P7: 日程を詰めている場面。 */
   private p7(text: string, fired: GuardrailId[]): DialogReply {
+    // オンライン商談そのものへの不安は、日程の可否より先に解消する
+    if (
+      /(ズーム|zoom|オンライン|ウェブ|web|リモート|url|URL)/i.test(text) &&
+      /(何|なに|わからない|分からない|使えない|できない|詳しくない|苦手|不安|やったこと)/.test(text)
+    ) {
+      this.unknownStreak = 0;
+      return this.speakOnly(
+        "スマートフォンでも参加できます。メールでお送りするURLをタップいただくだけですので、難しい操作はございません。",
+        "P7",
+        fired,
+        "条件分岐: オンライン商談の説明",
+      );
+    }
+    // 「そちらは遠い」という誤解も、移動不要であることだけ伝える
+    if (/(遠い|距離|来られ|お越し|伺うの)/.test(text)) {
+      this.unknownStreak = 0;
+      return this.speakOnly(
+        "オンラインですので、ご移動やご来社は不要でございます。",
+        "P7",
+        fired,
+        "条件分岐: オンラインなので移動は不要",
+      );
+    }
     // 日程NG は開いた質問に戻さず、収録済みの代替日程で出し直す。
     // 代替日程も断られた場合は同じ提案を繰り返さず、立て直し（最終的に丁寧な終話）へ回す。
     if (SCHEDULE_NG.test(text) && !SCHEDULE_OK.test(text)) {
@@ -921,6 +999,11 @@ export class DialogEngine {
     const phase = this.state.phase;
     if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
     if (TRANSFER.test(text)) return false;
+    // 受付での「営業電話はお断り」だけは P0X（痕跡を残して撤退）で扱う。
+    // 「間に合ってます」等の一般的な断りはここで拾わない
+    if (phase === "P0" && /(営業|セールス|勧誘|売り込み)/.test(text) && REFUSE_SALES.test(text)) {
+      return false;
+    }
     if (DECLINE.test(text)) return true;
     if (/大丈夫/.test(text)) {
       const scheduling = phase === "P6" || phase === "P7";
@@ -935,8 +1018,8 @@ export class DialogEngine {
    * 2回続けて断られたら食い下がらずに終話する。
    */
   private handleDecline(fired: GuardrailId[]): DialogReply {
-    if (this.declineStreak >= 2) {
-      return this.say("reject", this.toPhase("P0X"), fired, "2回連続の断り → 食い下がらず丁寧に終話");
+    if (this.refusalStreak >= 2) {
+      return this.say("reject", this.toPhase("P0X"), fired, "2回連続の拒絶 → 食い下がらず丁寧に終話");
     }
     if (!this.said.has("r5OtherScheme")) {
       this.unknownStreak = 0;

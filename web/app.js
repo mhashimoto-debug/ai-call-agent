@@ -402,7 +402,7 @@
       trigger: "\u672C\u4EBA\u304C\u4E0D\u5728\uFF0F\u5FDC\u5BFE\u8005\u306B\u6C7A\u88C1\u6A29\u304C\u306A\u3044",
       patterns: [
         // 主語つき（「代表は外出しております」）
-        /(代表|社長|専務|常務|会長|担当者|責任者|上の者|本人|主人)(は|が|も)?[^。]{0,12}(不在|おりませ|いませ|席を外|外出|留守|出張|お休み|休んで|帰(り|って)|出て(ます|おり)|来て(ない|いない|おりませ))/,
+        /(代表|社長|専務|常務|会長|担当者|責任者|上の者|本人|主人)(は|が|も)?[^。]{0,12}(不在|おりませ|いませ|席を外|外出|留守|出張|休み|お休み|休んで|帰(り|って)|出て(ます|おり)|来て(ない|いない|おりませ))/,
         // 主語なし。受付は主語を省いて「今不在にしてます」と言うことのほうが多い
         /(不在|席を外|出かけ|出払|留守|帰社|帰宅|退社)/,
         /(外出|出張)(中|し(て|ており)|です|でして|でし)/,
@@ -416,7 +416,7 @@
         // 戻り時間の申し出（不在の言い換えとして頻出）
         /(戻り(は|ます|次第|ましたら|になり)|お戻り|戻って(き|まい|参))/,
         // 決裁権がない
-        /(私|自分|わたくし|わたし)(では|には|は|じゃ)[^。]{0,12}(分から|わから|存じ|決められ|決裁|権限|判断でき|答えられ|お答えでき|なんとも)/,
+        /(私|自分|わたくし|わたし)(では|には|は|じゃ)[^。]{0,12}(分から|わから|分かり(ませ|かね)|わかり(ませ|かね)|存じ|決められ|決裁|権限|判断でき|答えられ|お答えでき|なんとも)/,
         /(担当(では|じゃ)(ない|ありませ)|権限が(ない|ありませ)|決裁権(は|が)?(ない|ありませ))/,
         /(受付|事務|経理|パート|アルバイト|留守番)(の者|の人|です|でして)/,
         /(本社|本部|上の者|別の者|担当の者)(に|が|と)(確認|聞|回|代わ|繋)/,
@@ -1193,11 +1193,19 @@
   var TRANSFER = /(お待ち|少々|少し待|代わり|かわり|変わり|繋ぎ|つなぎ|お繋ぎ|呼んで|呼びま|確認しま|担当に|本人に|代表に|社長に|今呼び|まいります)/;
   var REFUSE_SALES = /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
   var SCHEDULE_NG = /(都合が悪|都合つか|都合がつか|予定が入って|埋まって|ふさがって|塞がって|空いて(ない|いない|ませ)|厳しい|難しい|無理です|無理かな|出張(で|が|に)|休みで|定休|別の日|他の日|ほかの日|再来週|変更|ずらし|遅らせ|もう少し先)/;
-  var SCHEDULE_OK = /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解)/;
+  var SCHEDULE_OK = /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解|調整し|都合つけ|押さえて|空けておき|みてみます)/;
   var ABSENT_NOW = /(不在|席を外|外出|出かけ|出払|留守|帰社|帰宅|退社|出張|戻り|戻って|お休み|休み|おりませ|今[はも]?い(ませ|ない))/;
   var RETURN_TIME = /(午前|午後|朝|昼|夕方|夜|明日|明後日|来週|週明け|\d{1,2}\s*時|\d{1,2}\s*日|後ほど|のちほど|いつでも|月曜|火曜|水曜|木曜|金曜)/;
-  var DECLINE = /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|入って(ます|おり)ます|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
+  var DECLINE = /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|(?:保険|制度|共済|年金|中退共|DC)[^。]{0,6}入って(ます|おり|いる)|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|いらない|要らない|いらん|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
   var SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
+  var ANSWERED_CALL = /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
+  var PERSON_PHRASES = [
+    [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
+    [/夫婦(で|だけ|二人|2人)?/, 2],
+    [/(私|自分|わたし)(だけ|一人|ひとり)/, 1],
+    [/(一人|ひとり|1人)(だけ|です|ですね|でやって)/, 1]
+  ];
+  var EMAIL_UNAVAILABLE = /(メール|アドレス)[^。]{0,12}(苦手|使って(ない|いない|おりませ|ません)|持って(ない|いない|おりませ)|見ない|分からない|わからない|やってない)/;
   var TIME_SLOT = /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
   var PUBLIC_BODY_CONFUSION = /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省|年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労働基準監督署|公務員|職員|担当官|補助金|助成金|給付金)/;
   var EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
@@ -1231,6 +1239,10 @@
     const ones = onesPart === "" ? 0 : KANJI_DIGITS.indexOf(onesPart);
     if (tens < 0 || ones < 0) return null;
     return tens * 10 + ones;
+  }
+  function phraseCount(text) {
+    for (const [pattern, count] of PERSON_PHRASES) if (pattern.test(text)) return count;
+    return null;
   }
   function firstNumber(text, patterns) {
     for (const p of patterns) {
@@ -1282,8 +1294,11 @@
     absentMode = false;
     /** 不在対応で何ターン粘ったか。確認が取れないまま長引かせないための上限。 */
     absentTurns = 0;
-    /** 連続して断られた回数。2回続いたら食い下がらない。 */
-    declineStreak = 0;
+    /**
+     * 連続して拒絶された回数（多忙・断りをまとめて数える）。
+     * 種類が違っても2回続けて断られた時点で食い下がらない。
+     */
+    refusalStreak = 0;
     /** 直前に流した収録台本。言い直しはフェーズではなくこれを基準にする。 */
     lastLine = null;
     /** 架電開始の第一声。 */
@@ -1297,10 +1312,21 @@
       for (const g2 of fired) {
         if (!this.state.firedGuardrails.includes(g2)) this.state.firedGuardrails.push(g2);
       }
+      if (!fired.includes("R2") && !this.isDecline(text)) this.refusalStreak = 0;
       this.harvested = this.harvest(text);
       const collected = this.collectExpected(text);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
+      if (collected === "headcount") {
+        this.unknownStreak = 0;
+        this.refusalStreak = 0;
+        return this.say(
+          "hearingFiscalEmail",
+          this.toPhase("P5"),
+          fired,
+          "\u5207\u308A\u8FD4\u3057\u3078\u306E\u56DE\u7B54\u304B\u3089 H5 \u3092\u53D6\u5F97 \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078"
+        );
+      }
       if (fired.includes("R2") && this.busyPitchDone) {
         const cont = this.afterBusy(fired);
         if (cont) return cont;
@@ -1309,18 +1335,8 @@
         return this.absentFollowUp(text, fired);
       }
       if (this.isDecline(text)) {
-        this.declineStreak++;
+        this.refusalStreak++;
         return this.handleDecline(fired);
-      }
-      this.declineStreak = 0;
-      if (collected === "headcount") {
-        this.unknownStreak = 0;
-        return this.say(
-          "hearingFiscalEmail",
-          this.toPhase("P5"),
-          fired,
-          "\u5207\u308A\u8FD4\u3057\u3078\u306E\u56DE\u7B54\u304B\u3089 H5 \u3092\u53D6\u5F97 \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078"
-        );
       }
       switch (this.state.phase) {
         case "P0":
@@ -1379,7 +1395,7 @@
     collectExpected(text) {
       if (!this.expecting) return null;
       if (this.expecting === "headcount") {
-        const n = this.state.hearing.H5 ? null : toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+        const n = this.state.hearing.H5 ? null : toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text);
         if (n === null || n <= 0) return null;
         applyExtracted(this.state, { H5: `${n}\u540D` });
         if (!this.harvested.includes("H5")) this.harvested.push("H5");
@@ -1446,6 +1462,10 @@
       }
       if (has("R2") && !this.busyPitchDone) {
         this.unknownStreak = 0;
+        this.refusalStreak++;
+        if (this.refusalStreak >= 2) {
+          return this.say("reject", this.toPhase("P0X"), fired, "2\u56DE\u9023\u7D9A\u306E\u62D2\u7D76 \u2192 \u98DF\u3044\u4E0B\u304C\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
+        }
         this.expecting = "headcount";
         this.busyPitchDone = true;
         return this.say("r2Busy", this.toPhase("P3"), fired, "R2: 30\u79D2\u3067\u8981\u70B9\u3092\u4F1D\u3048\u3066\u4EBA\u6570\u78BA\u8A8D\u3078");
@@ -1467,6 +1487,10 @@
           TRANSFER.test(text) ? "\u53D6\u6B21\u304E\u767A\u751F \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981" : "\u7528\u4EF6\u3092\u554F\u308F\u308C\u305F \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981"
         );
       }
+      if (YES.test(text) || ANSWERED_CALL.test(text)) {
+        this.unknownStreak = 0;
+        return this.say("overview", "P1", fired, "\u76F8\u624B\u304C\u5FDC\u7B54 \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981");
+      }
       return this.repair(fired, "\u53D7\u4ED8\u306E\u53CD\u5FDC\u3092\u5224\u5B9A\u3067\u304D\u305A");
     }
     p1(text, fired) {
@@ -1480,7 +1504,7 @@
     hearingAgeCount(text, fired) {
       const got = [...this.harvested];
       if (!this.state.hearing.H5) {
-        const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
+        const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text);
         if (n !== null && n > 0) {
           applyExtracted(this.state, { H5: `${n}\u540D` });
           got.push("H5");
@@ -1514,6 +1538,15 @@
       if (this.state.email && !got.includes("email") && EMAIL_RE.test(text.replace(/\s/g, ""))) {
         got.push("email");
       }
+      if (got.length === 0 && EMAIL_UNAVAILABLE.test(text)) {
+        this.unknownStreak = 0;
+        return this.speakOnly(
+          this.state.hearing.H7 ? "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u304A\u9001\u308A\u3044\u305F\u3057\u307E\u3059\u3002" : "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u3082\u304A\u9001\u308A\u3067\u304D\u307E\u3059\u3002",
+          this.state.phase,
+          fired,
+          "\u30E1\u30FC\u30EB\u304C\u4F7F\u3048\u306A\u3044 \u2192 \u90F5\u9001\u306B\u5207\u308A\u66FF\u3048\u3066\u6C7A\u7B97\u6708\u306E\u307F\u78BA\u8A8D"
+        );
+      }
       if (got.length === 0 && !YES.test(text)) {
         return this.repair(fired, "\u6C7A\u7B97\u6708\u30FB\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u56DE\u7B54\u3068\u3057\u3066\u8AAD\u307F\u53D6\u308C\u305A");
       }
@@ -1528,6 +1561,24 @@
     }
     /** P6/P7: 日程を詰めている場面。 */
     p7(text, fired) {
+      if (/(ズーム|zoom|オンライン|ウェブ|web|リモート|url|URL)/i.test(text) && /(何|なに|わからない|分からない|使えない|できない|詳しくない|苦手|不安|やったこと)/.test(text)) {
+        this.unknownStreak = 0;
+        return this.speakOnly(
+          "\u30B9\u30DE\u30FC\u30C8\u30D5\u30A9\u30F3\u3067\u3082\u53C2\u52A0\u3067\u304D\u307E\u3059\u3002\u30E1\u30FC\u30EB\u3067\u304A\u9001\u308A\u3059\u308BURL\u3092\u30BF\u30C3\u30D7\u3044\u305F\u3060\u304F\u3060\u3051\u3067\u3059\u306E\u3067\u3001\u96E3\u3057\u3044\u64CD\u4F5C\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u3002",
+          "P7",
+          fired,
+          "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u5546\u8AC7\u306E\u8AAC\u660E"
+        );
+      }
+      if (/(遠い|距離|来られ|お越し|伺うの)/.test(text)) {
+        this.unknownStreak = 0;
+        return this.speakOnly(
+          "\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u3001\u3054\u79FB\u52D5\u3084\u3054\u6765\u793E\u306F\u4E0D\u8981\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
+          "P7",
+          fired,
+          "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u306A\u306E\u3067\u79FB\u52D5\u306F\u4E0D\u8981"
+        );
+      }
       if (SCHEDULE_NG.test(text) && !SCHEDULE_OK.test(text)) {
         if (!this.said.has("reschedule")) {
           this.unknownStreak = 0;
@@ -1752,6 +1803,9 @@
       const phase = this.state.phase;
       if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
       if (TRANSFER.test(text)) return false;
+      if (phase === "P0" && /(営業|セールス|勧誘|売り込み)/.test(text) && REFUSE_SALES.test(text)) {
+        return false;
+      }
       if (DECLINE.test(text)) return true;
       if (/大丈夫/.test(text)) {
         const scheduling = phase === "P6" || phase === "P7";
@@ -1765,8 +1819,8 @@
      * 2回続けて断られたら食い下がらずに終話する。
      */
     handleDecline(fired) {
-      if (this.declineStreak >= 2) {
-        return this.say("reject", this.toPhase("P0X"), fired, "2\u56DE\u9023\u7D9A\u306E\u65AD\u308A \u2192 \u98DF\u3044\u4E0B\u304C\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
+      if (this.refusalStreak >= 2) {
+        return this.say("reject", this.toPhase("P0X"), fired, "2\u56DE\u9023\u7D9A\u306E\u62D2\u7D76 \u2192 \u98DF\u3044\u4E0B\u304C\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
       }
       if (!this.said.has("r5OtherScheme")) {
         this.unknownStreak = 0;
