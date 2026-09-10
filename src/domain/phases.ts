@@ -70,8 +70,9 @@ export const PHASES: Record<PhaseId, PhaseDef> = {
       "ここでは制度のメリットをまだ説明しない。質問で終える。",
     ],
     transition: "相手から何らかの回答があれば P2 へ。「制度がない」と言われた場合は R1 により P3 へ直行する。",
-    // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路
-    allowedNext: ["P1", "P2", "P3", "P0X"],
+    // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路。
+    // P7 直行は「ホームページを見て」等で説明を打ち切られ、日程打診に切り替える経路
+    allowedNext: ["P1", "P2", "P3", "P7", "P0X"],
     targetElapsedSec: 90,
   },
 
@@ -95,7 +96,8 @@ export const PHASES: Record<PhaseId, PhaseDef> = {
       "ここでまだ商品説明をしない。相手が不足・不明を口にするまで待つ。",
     ],
     transition: "相手が現状の不足・不明を口にしたら P3 へ。",
-    allowedNext: ["P2", "P3", "P0X"],
+    // P7 直行は説明を打ち切られて日程打診に切り替える経路
+    allowedNext: ["P2", "P3", "P7", "P0X"],
     targetElapsedSec: 120,
   },
 
@@ -124,7 +126,7 @@ export const PHASES: Record<PhaseId, PhaseDef> = {
     ],
     transition: "理解の反応があれば P4 へ。法改正フックを冒頭で使い切っている場合は P5 へ直行する。",
     // P5 直行は、収録台本のように法改正フック(P4 相当)を冒頭の概要で言い切った場合の経路
-    allowedNext: ["P3", "P4", "P5", "P6", "P0X"],
+    allowedNext: ["P3", "P4", "P5", "P6", "P7", "P0X"],
     targetElapsedSec: 160,
   },
 

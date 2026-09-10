@@ -11,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DialogEngine, VOICE_LINES, type DialogReply } from "../../demo/dialogEngine.js";
+import { AUDIO_BASE, DialogEngine, VOICE_LINES, type DialogReply } from "../../demo/dialogEngine.js";
 import { createCallState, type CallState } from "../state.js";
 import { detectGuardrails } from "../guardrails.js";
 import type { PhaseId } from "../types.js";
@@ -489,6 +489,7 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
     "3月です", "info@example.co.jp です", "メールは苦手で",
     "はい大丈夫です", "水曜は厳しい", "調整してみます", "オンラインって何？",
     "090-1234-5678 です", "ふーん", "えーっと", "……", "うーん", "よく分からん",
+    "ホームページに載ってます", "HPを見てください", "サイトに出てます",
   ];
 
   // 再現できるよう擬似乱数は固定シードで回す
@@ -515,4 +516,93 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
       previous = r.utterance;
     }
   }
+});
+
+// ============================================================
+// 11. 「ホームページを見て」への対応（資料請求との切り分け）
+// ============================================================
+
+const HP_CASES: string[] = [
+  "ホームページに載ってるので見てください",
+  "それもホームページに載ってます",
+  "HPに出てます",
+  "詳しくはサイトをご覧ください",
+  "ネットに載ってますよ",
+  "まずホームページを見せてもらえますか",
+  "うちのサイトに全部出てます",
+  "会社の概要はウェブに掲載しております",
+];
+
+for (const text of HP_CASES) {
+  test(`HP参照: 「${text}」を資料請求と誤判定しない`, () => {
+    assert.ok(
+      !detectGuardrails(text).includes("R4"),
+      `資料請求(R4)として誤判定している（検知: ${detectGuardrails(text).join(",")}）`,
+    );
+  });
+}
+
+test("HP参照: 本来の資料請求は引き続き R4 として扱う", () => {
+  for (const text of [
+    "とりあえず資料だけ送ってください",
+    "パンフレットを郵送してもらえますか",
+    "まず資料を見せてください",
+    "案内をメールで送ってください",
+  ]) {
+    assert.ok(detectGuardrails(text).includes("R4"), `R4 が発火しない: ${text}`);
+  }
+});
+
+test("HP参照: メールアドレスを聞いた場面で言われても催促し直さない", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  call.say("50代で20人です"); // → 決算月とメールアドレスの質問
+  const r = call.say("ホームページに載ってるので見てください");
+
+  // 送付先の催促に戻らないこと
+  assert.doesNotMatch(r.utterance, /メールアドレス/, `メールアドレスを催促している: ${r.matched}`);
+  assert.notEqual(r.utterance, VOICE_LINES.r4Document.text);
+  assert.notEqual(r.utterance, VOICE_LINES.hearingFiscalEmail.text);
+  // 受け止めたうえでオンラインでの接点づくりに切り替えること
+  assert.match(r.utterance, /サイトより確認/);
+  assert.match(r.utterance, /オンライン/);
+  assert.equal(r.phase, "P7");
+});
+
+test("HP参照: 2回続けて言われたら丁寧に終話する", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  call.say("50代で20人です");
+  call.say("ホームページに載ってるので見てください");
+  const closed = call.say("それもホームページに載ってます");
+
+  assert.equal(closed.utterance, VOICE_LINES.reject.text, `終話していない: ${closed.matched}`);
+  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.equal(call.state.ended, true);
+});
+
+test("HP参照: メールアドレスの催促をオウム返ししない", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  call.say("50代で20人です");
+  const first = call.say("ホームページに載ってるので見てください");
+  const second = call.say("それもホームページに載ってます");
+  assert.notEqual(second.utterance, first.utterance, "同じ応答を繰り返している");
+  for (const r of [first, second]) {
+    assert.doesNotMatch(r.utterance, /送付先のメールアドレス/, "送付先を催促している");
+  }
+});
+
+test("HP参照: 資料請求のあとにHPと言われたら送付先を聞き直さない", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  const doc = call.say("とりあえず資料を送ってください");
+  assert.equal(doc.utterance, VOICE_LINES.r4Document.text);
+
+  const hp = call.say("あ、ホームページに載ってるのでいいです");
+  assert.doesNotMatch(hp.utterance, /メールアドレス/, `送付先を聞き直している: ${hp.matched}`);
 });

@@ -64,8 +64,9 @@
         "\u3053\u3053\u3067\u306F\u5236\u5EA6\u306E\u30E1\u30EA\u30C3\u30C8\u3092\u307E\u3060\u8AAC\u660E\u3057\u306A\u3044\u3002\u8CEA\u554F\u3067\u7D42\u3048\u308B\u3002"
       ],
       transition: "\u76F8\u624B\u304B\u3089\u4F55\u3089\u304B\u306E\u56DE\u7B54\u304C\u3042\u308C\u3070 P2 \u3078\u3002\u300C\u5236\u5EA6\u304C\u306A\u3044\u300D\u3068\u8A00\u308F\u308C\u305F\u5834\u5408\u306F R1 \u306B\u3088\u308A P3 \u3078\u76F4\u884C\u3059\u308B\u3002",
-      // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路
-      allowedNext: ["P1", "P2", "P3", "P0X"],
+      // P3 直行は R1（退職金制度なし＝最も見込みが高いホットサイン）専用の経路。
+      // P7 直行は「ホームページを見て」等で説明を打ち切られ、日程打診に切り替える経路
+      allowedNext: ["P1", "P2", "P3", "P7", "P0X"],
       targetElapsedSec: 90
     },
     P2: {
@@ -88,7 +89,8 @@
         "\u3053\u3053\u3067\u307E\u3060\u5546\u54C1\u8AAC\u660E\u3092\u3057\u306A\u3044\u3002\u76F8\u624B\u304C\u4E0D\u8DB3\u30FB\u4E0D\u660E\u3092\u53E3\u306B\u3059\u308B\u307E\u3067\u5F85\u3064\u3002"
       ],
       transition: "\u76F8\u624B\u304C\u73FE\u72B6\u306E\u4E0D\u8DB3\u30FB\u4E0D\u660E\u3092\u53E3\u306B\u3057\u305F\u3089 P3 \u3078\u3002",
-      allowedNext: ["P2", "P3", "P0X"],
+      // P7 直行は説明を打ち切られて日程打診に切り替える経路
+      allowedNext: ["P2", "P3", "P7", "P0X"],
       targetElapsedSec: 120
     },
     P3: {
@@ -116,7 +118,7 @@
       ],
       transition: "\u7406\u89E3\u306E\u53CD\u5FDC\u304C\u3042\u308C\u3070 P4 \u3078\u3002\u6CD5\u6539\u6B63\u30D5\u30C3\u30AF\u3092\u5192\u982D\u3067\u4F7F\u3044\u5207\u3063\u3066\u3044\u308B\u5834\u5408\u306F P5 \u3078\u76F4\u884C\u3059\u308B\u3002",
       // P5 直行は、収録台本のように法改正フック(P4 相当)を冒頭の概要で言い切った場合の経路
-      allowedNext: ["P3", "P4", "P5", "P6", "P0X"],
+      allowedNext: ["P3", "P4", "P5", "P6", "P7", "P0X"],
       targetElapsedSec: 160
     },
     // 法改正の数値（施行日・拠出限度額）は 2026-09-08 に一次情報で確認済み。
@@ -373,8 +375,13 @@
       trigger: "\u300C\u8CC7\u6599\u3060\u3051\u9001\u3063\u3066\u300D",
       patterns: [
         /(資料|パンフ|パンフレット|案内|ご案内|書類|概要|カタログ|チラシ|データ|詳細)[^。]{0,12}(送っ|送付|郵送|投函|メール|ファックス|FAX|くださ|ちょうだい|頂戴|ほしい|欲しい|いただけ|もらえ|もらい)/,
-        /(まず|とりあえず|一旦|いったん|一度|先に)[^。]{0,10}(資料|書面|紙|見て|見せて|読ませ|拝見|目を通)/,
-        /(ホームページ|ＨＰ|HP|ウェブ|サイト|URL|メール)[^。]{0,12}(見|拝見|教え|送)/,
+        // 「まず見せて」だけでは何を見せるのか分からない（ホームページの案内かもしれない）ため、
+        // 資料そのものを指す語を必須にする
+        /(まず|とりあえず|一旦|いったん|一度|先に)[^。]{0,10}(資料|書面|紙|パンフ|カタログ|案内|概要)/,
+        // 「ホームページを見て」は資料請求ではなく回避なので、ここでは拾わない
+        // （dialogEngine の HP_REFERENCE で別扱いにする。
+        //   混同するとメールアドレスの催促を始めてしまい会話が壊れる）
+        /(メール|SMS|ショートメール|ファックス|FAX)[^。]{0,12}(で送|送っ|送付|ください|いただけ|もらえ)/,
         /(送っておいて|送るだけ|送ってもら|置いていって)/,
         /(見てから|読んでから|目を通してから)[^。]{0,10}(判断|検討|連絡|考え)/
       ],
@@ -999,6 +1006,8 @@
   var RETURN_TIME = /(午前|午後|朝|昼|夕方|夜|明日|明後日|来週|週明け|\d{1,2}\s*時|\d{1,2}\s*日|後ほど|のちほど|いつでも|月曜|火曜|水曜|木曜|金曜)/;
   var DECLINE = /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|(?:保険|制度|共済|年金|中退共|DC)[^。]{0,6}入って(ます|おり|いる)|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|いらない|要らない|いらん|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
   var SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
+  var HP_REFERENCE = /(ホームページ|ＨＰ|HP|ウェブ|Web|ウェブサイト|サイト|ネット|インターネット|オンライン上|URL|ＵＲＬ|弊社サイト)[^。]{0,16}(見|ご覧|載って|掲載|出て|ござい|あります|ありま|確認|調べ|検索|参照)/i;
+  var POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)/;
   var ANSWERED_CALL = /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
   var PERSON_PHRASES = [
     [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
@@ -1103,6 +1112,10 @@
     recapped = /* @__PURE__ */ new Set();
     /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
     replayed = /* @__PURE__ */ new Set();
+    /** 「ホームページを見て」と言われた回数。2回目は食い下がらない。 */
+    hpDeflections = 0;
+    /** 一度でも HP 参照があったか。以後はメールアドレスの催促をしない。 */
+    hpReferenced = false;
     /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
     publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -1159,6 +1172,7 @@
       if (this.absentMode && !this.state.ended) {
         return this.absentFollowUp(text, fired);
       }
+      if (this.isHpReference(text)) return this.handleHpReference(fired);
       if (this.isDecline(text)) {
         this.refusalStreak++;
         return this.handleDecline(fired);
@@ -1293,6 +1307,9 @@
           "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u30BB\u30AB\u30F3\u30C9\u30AA\u30D4\u30CB\u30AA\u30F3\u3068\u3057\u3066\u63D0\u6848"
         );
         if (reply) return reply;
+      }
+      if (has("R4") && (this.hpReferenced || this.isHpReference(text))) {
+        return this.handleHpReference(fired);
       }
       if (has("R4")) {
         this.unknownStreak = 0;
@@ -1645,6 +1662,35 @@
       }
       return this.say("reject", this.toPhase("P0X"), fired, "\u4E0D\u5728: \u78BA\u8A8D\u304C\u53D6\u308C\u306A\u3044\u305F\u3081\u7C98\u3089\u305A\u7D42\u8A71");
     }
+    // ---------- 「ホームページを見て」への対応 ----------
+    /** 「ホームページに載っている」型の回避かどうか。 */
+    isHpReference(text) {
+      const phase = this.state.phase;
+      if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
+      return HP_REFERENCE.test(text) || POSTED_ELSEWHERE.test(text);
+    }
+    /**
+     * 「ホームページを見てください」と言われたときの切り返し。
+     *
+     * 送付先を聞き返すのは禁止（相手は送ってほしいと言っていない）。
+     * 資料を送る理由が消えているので、受け止めたうえで直接オンラインでの接点に切り替える。
+     * 2回続けて同じ回避をされたら食い下がらずに終話する。
+     */
+    handleHpReference(fired) {
+      this.hpReferenced = true;
+      this.hpDeflections++;
+      this.unknownStreak = 0;
+      if (this.hpDeflections >= 2 || this.refusalStreak >= 1) {
+        return this.say("reject", this.toPhase("P0X"), fired, "2\u56DE\u7D9A\u3051\u3066HP\u53C2\u7167\u3067\u56DE\u907F \u2192 \u7C98\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
+      }
+      this.refusalStreak++;
+      return this.speakOnly(
+        `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${DEMO_SCENARIO.contactTitle}\u69D8\u3068\u4E00\u5EA6${DEMO_SCENARIO.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+        this.toPhase("P7"),
+        fired,
+        "HP\u53C2\u7167 \u2192 \u9001\u4ED8\u5148\u306F\u805E\u304B\u305A\u3001\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u306E\u65E5\u7A0B\u6253\u8A3A\u306B\u5207\u308A\u66FF\u3048"
+      );
+    }
     // ---------- 断り・導入済みへの対応 ----------
     /**
      * 「もう対策してる」「間に合ってます」等の断りかどうか。
@@ -1876,11 +1922,16 @@
     /確認して(まいり|参り|きます|みます)/,
     /(ただいま|只今)[^。]{0,6}(代わ|お繋ぎ|つなぎ)/,
     // 本人・担当者が出た合図
-    /(私|わたくし|わたし)ですが/,
+    /(私|わたくし|わたし|僕|自分|当方)(です|ですが|ですけど|ですよ)/,
+    /(私|わたくし|わたし|僕|自分|当方)が(担当|窓口|責任者|やって|見て)/,
+    /(担当|窓口)(です|ですが|ですけど)/,
+    /(私|わたくし|僕|自分|当方)で(お伺い|伺い|承り|お受け|大丈夫|結構)/,
     /(担当|責任者|窓口|代表|社長)の[^\s、。]{1,8}?(です|でございます)/,
     /(担当|責任者|代表|社長)(の者)?(です|でございます)/,
     /お電話代わりました/
   ];
+  var UNKNOWN_CONTACT = /(担当(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|いない|決まって))|(誰|どなた)(に|へ|宛)?\s*(繋|つな|回|お伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+  var PURPOSE_FOLLOWUP = /(具体的|内容|詳し|中身|どんな話|なんの話|何の話|要する|どういうこと)/;
   function detectHandover(text) {
     return HANDOVER_PATTERNS.some((p) => p.test(text));
   }
@@ -1892,6 +1943,10 @@
     purposeExplained = false;
     /** 取次ぎ依頼を言い直した回数。 */
     retries = 0;
+    /** 用件を問われた回数。 */
+    purposeAsks = 0;
+    /** 具体的な部署・役職を提示済みか。 */
+    departmentSuggested = false;
     outcome = "calling";
     absence = null;
     /** 通話が終わっている（引き継ぎ済み・終話済み）か。 */
@@ -1932,13 +1987,33 @@
           blocked: []
         };
       }
-      if (ASK_PURPOSE.test(text)) {
-        if (!this.purposeExplained) {
+      if (UNKNOWN_CONTACT.test(text)) {
+        if (!this.departmentSuggested) {
+          this.departmentSuggested = true;
+          return this.speak(
+            "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7DCF\u52D9\u3084\u4EBA\u4E8B\u306E\u3054\u62C5\u5F53\u8005\u69D8\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\uFF08\u793E\u9577\u69D8\uFF09\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "\u62C5\u5F53\u4E0D\u660E \u2192 \u7DCF\u52D9\u30FB\u4EBA\u4E8B\u30FB\u4EE3\u8868\u8005\u3092\u6319\u3052\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
+            fired
+          );
+        }
+        this.outcome = "rejected";
+        return this.say("reject", "\u53D6\u6B21\u304E\u5148\u304C\u6C7A\u307E\u3089\u305A \u2192 \u7C98\u3089\u305A\u7D42\u8A71", fired);
+      }
+      if (ASK_PURPOSE.test(text) || PURPOSE_FOLLOWUP.test(text)) {
+        this.purposeAsks++;
+        if (this.purposeAsks === 1) {
           this.purposeExplained = true;
           return this.say("overview", "\u7528\u4EF6\u3092\u554F\u308F\u308C\u305F \u2192 \u6CD5\u6539\u6B63\u306E\u4EF6\u3068\u3057\u30661\u56DE\u3060\u3051\u8AAC\u660E", fired);
         }
+        if (this.purposeAsks === 2) {
+          return this.speak(
+            "\u306F\u3044\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5236\u5EA6\u5C0E\u5165\u72B6\u6CC1\u306B\u3064\u3044\u3066\u306E\u7C21\u5358\u306A\u78BA\u8A8D\u3067\u3054\u3056\u3044\u307E\u3059\u3002\u6050\u308C\u5165\u308A\u307E\u3059\u304C\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "\u7528\u4EF6\u3092\u91CD\u306D\u3066\u554F\u308F\u308C\u305F \u2192 \u5185\u5BB9\u3092\u4E00\u8A00\u3067\u793A\u3057\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
+            fired
+          );
+        }
         this.outcome = "rejected";
-        return this.say("reject", "\u7528\u4EF6\u8AAC\u660E\u5F8C\u3082\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A \u2192 \u7C98\u3089\u305A\u7D42\u8A71", fired);
+        return this.say("reject", "\u7528\u4EF6\u8AAC\u660E\u3092\u91CD\u306D\u3066\u3082\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A \u2192 \u7C98\u3089\u305A\u7D42\u8A71", fired);
       }
       this.retries++;
       if (this.retries >= 2) {
@@ -1946,6 +2021,17 @@
         return this.say("reject", "\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A \u2192 \u7C98\u3089\u305A\u7D42\u8A71", fired);
       }
       return this.say("greeting", "\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A \u2192 \u4F9D\u983C\u3092\u8A00\u3044\u76F4\u3059", fired);
+    }
+    /** 収録の無い応答（具体的な部署の提示など）。音声合成で読み上げる。 */
+    speak(raw, matched, fired = []) {
+      return {
+        utterance: autoFix(raw).text,
+        matched,
+        outcome: this.outcome,
+        handover: false,
+        guardrails: fired,
+        blocked: checkForbidden(raw).filter((v) => v.fixable)
+      };
     }
     say(id, matched, fired = []) {
       const line = VOICE_LINES[id];

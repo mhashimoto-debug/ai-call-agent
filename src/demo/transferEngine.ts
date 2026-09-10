@@ -73,11 +73,29 @@ export const HANDOVER_PATTERNS: RegExp[] = [
   /確認して(まいり|参り|きます|みます)/,
   /(ただいま|只今)[^。]{0,6}(代わ|お繋ぎ|つなぎ)/,
   // 本人・担当者が出た合図
-  /(私|わたくし|わたし)ですが/,
+  /(私|わたくし|わたし|僕|自分|当方)(です|ですが|ですけど|ですよ)/,
+  /(私|わたくし|わたし|僕|自分|当方)が(担当|窓口|責任者|やって|見て)/,
+  /(担当|窓口)(です|ですが|ですけど)/,
+  /(私|わたくし|僕|自分|当方)で(お伺い|伺い|承り|お受け|大丈夫|結構)/,
   /(担当|責任者|窓口|代表|社長)の[^\s、。]{1,8}?(です|でございます)/,
   /(担当|責任者|代表|社長)(の者)?(です|でございます)/,
   /お電話代わりました/,
 ];
+
+/**
+ * 「誰に繋げばいいか分からない」という応答。
+ *
+ * ここで取次ぎ依頼をそのまま繰り返しても相手は動けない。
+ * 具体的な部署・役職を挙げて、取次ぎ先を決められる形にして返す必要がある。
+ */
+export const UNKNOWN_CONTACT =
+  /(担当(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|いない|決まって))|(誰|どなた)(に|へ|宛)?\s*(繋|つな|回|お伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+
+/**
+ * 用件を重ねて確認された、と読む言い回し。
+ * ASK_PURPOSE（「ご用件は？」）では拾えない「具体的な内容は？」のような聞き方を補う。
+ */
+const PURPOSE_FOLLOWUP = /(具体的|内容|詳し|中身|どんな話|なんの話|何の話|要する|どういうこと)/;
 
 /** 取次ぎ成功のサインを検知する。 */
 export function detectHandover(text: string): boolean {
@@ -94,6 +112,10 @@ export class TransferEngine {
   private purposeExplained = false;
   /** 取次ぎ依頼を言い直した回数。 */
   private retries = 0;
+  /** 用件を問われた回数。 */
+  private purposeAsks = 0;
+  /** 具体的な部署・役職を提示済みか。 */
+  private departmentSuggested = false;
   private outcome: TransferOutcome = "calling";
   private absence: AbsenceRecord | null = null;
 
@@ -146,23 +168,57 @@ export class TransferEngine {
       };
     }
 
-    // 4. 用件を問われたら1回だけ説明する。二度目は食い下がらない
-    if (ASK_PURPOSE.test(text)) {
-      if (!this.purposeExplained) {
+    // 4. 「誰に繋げばいいか分からない」には、挨拶を繰り返さず具体的な取次ぎ先を挙げる
+    if (UNKNOWN_CONTACT.test(text)) {
+      if (!this.departmentSuggested) {
+        this.departmentSuggested = true;
+        return this.speak(
+          "失礼いたしました！総務や人事のご担当者様、あるいは代表者様（社長様）にお繋ぎいただけますでしょうか？",
+          "担当不明 → 総務・人事・代表者を挙げて取次ぎを再依頼",
+          fired,
+        );
+      }
+      this.outcome = "rejected";
+      return this.say("reject", "取次ぎ先が決まらず → 粘らず終話", fired);
+    }
+
+    // 5. 用件を問われたら説明する。重ねて聞かれても勝手に終話せず、取次ぎを促し直す
+    if (ASK_PURPOSE.test(text) || PURPOSE_FOLLOWUP.test(text)) {
+      this.purposeAsks++;
+      if (this.purposeAsks === 1) {
         this.purposeExplained = true;
         return this.say("overview", "用件を問われた → 法改正の件として1回だけ説明", fired);
       }
+      if (this.purposeAsks === 2) {
+        return this.speak(
+          "はい、御社の現在の制度導入状況についての簡単な確認でございます。恐れ入りますが、ご担当者様にお繋ぎいただけますでしょうか？",
+          "用件を重ねて問われた → 内容を一言で示して取次ぎを再依頼",
+          fired,
+        );
+      }
       this.outcome = "rejected";
-      return this.say("reject", "用件説明後も取次ぎに至らず → 粘らず終話", fired);
+      return this.say("reject", "用件説明を重ねても取次ぎに至らず → 粘らず終話", fired);
     }
 
-    // 5. それ以外は取次ぎ依頼をもう一度だけ。粘らずに終話する
+    // 6. それ以外は取次ぎ依頼をもう一度だけ。粘らずに終話する
     this.retries++;
     if (this.retries >= 2) {
       this.outcome = "rejected";
       return this.say("reject", "取次ぎに至らず → 粘らず終話", fired);
     }
     return this.say("greeting", "取次ぎに至らず → 依頼を言い直す", fired);
+  }
+
+  /** 収録の無い応答（具体的な部署の提示など）。音声合成で読み上げる。 */
+  private speak(raw: string, matched: string, fired: GuardrailId[] = []): TransferReply {
+    return {
+      utterance: autoFix(raw).text,
+      matched,
+      outcome: this.outcome,
+      handover: false,
+      guardrails: fired,
+      blocked: checkForbidden(raw).filter((v) => v.fixable),
+    };
   }
 
   private say(id: VoiceLineId, matched: string, fired: GuardrailId[] = []): TransferReply {

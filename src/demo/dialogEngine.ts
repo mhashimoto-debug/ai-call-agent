@@ -232,6 +232,19 @@ const DECLINE =
 /** 「大丈夫」を肯定と読んでよい文脈（日程の可否を答えている場面）。 */
 const SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
 
+/**
+ * 「ホームページに載っています」型の回避。
+ *
+ * 資料請求（R4）と混同してはいけない。R4 は送付先を確定させる切り返しなので、
+ * HP を見てくれと言われているのにメールアドレスを催促することになり、会話が壊れる。
+ * こちらは「送る必要がない＝接点を作る理由が消えた」状態なので、日程打診に切り替える。
+ */
+const HP_REFERENCE =
+  /(ホームページ|ＨＰ|HP|ウェブ|Web|ウェブサイト|サイト|ネット|インターネット|オンライン上|URL|ＵＲＬ|弊社サイト)[^。]{0,16}(見|ご覧|載って|掲載|出て|ござい|あります|ありま|確認|調べ|検索|参照)/i;
+
+/** HP 参照の言い換え（「そこに載ってます」のように媒体名を省く場合）。 */
+const POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)/;
+
 /** 相手が電話口に出た合図（受付の名乗り・相槌）。 */
 const ANSWERED_CALL =
   /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
@@ -414,6 +427,10 @@ export class DialogEngine {
   private recapped = new Set<VoiceLineId>();
   /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
   private replayed = new Set<VoiceLineId>();
+  /** 「ホームページを見て」と言われた回数。2回目は食い下がらない。 */
+  private hpDeflections = 0;
+  /** 一度でも HP 参照があったか。以後はメールアドレスの催促をしない。 */
+  private hpReferenced = false;
   /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
   private publicBodyCorrected = false;
   /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -490,6 +507,10 @@ export class DialogEngine {
     if (this.absentMode && !this.state.ended) {
       return this.absentFollowUp(text, fired);
     }
+
+    // 「ホームページに載っています」は資料請求ではなく回避。
+    // 断り判定より先に見て、メールアドレスの催促に入らないようにする
+    if (this.isHpReference(text)) return this.handleHpReference(fired);
 
     // 断り・導入済みの申し出は、ヒアリングの進行より先に判定する
     if (this.isDecline(text)) {
@@ -645,7 +666,12 @@ export class DialogEngine {
       );
       if (reply) return reply;
     }
-    // R4: 資料送付で終わらせず、送付先メールアドレスの確定をセットで取る
+    // R4: 資料送付で終わらせず、送付先メールアドレスの確定をセットで取る。
+    // ただし「ホームページを見て」は送ってほしいという話ではないので、
+    // 送付先の催促に入らず HP 参照として扱う
+    if (has("R4") && (this.hpReferenced || this.isHpReference(text))) {
+      return this.handleHpReference(fired);
+    }
     if (has("R4")) {
       this.unknownStreak = 0;
       this.expecting = "contact";
@@ -1054,6 +1080,40 @@ export class DialogEngine {
       );
     }
     return this.say("reject", this.toPhase("P0X"), fired, "不在: 確認が取れないため粘らず終話");
+  }
+
+  // ---------- 「ホームページを見て」への対応 ----------
+
+  /** 「ホームページに載っている」型の回避かどうか。 */
+  private isHpReference(text: string): boolean {
+    const phase = this.state.phase;
+    // ヒアリング中（P8 以降）は質問への回答なので、回避としては見ない
+    if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
+    return HP_REFERENCE.test(text) || POSTED_ELSEWHERE.test(text);
+  }
+
+  /**
+   * 「ホームページを見てください」と言われたときの切り返し。
+   *
+   * 送付先を聞き返すのは禁止（相手は送ってほしいと言っていない）。
+   * 資料を送る理由が消えているので、受け止めたうえで直接オンラインでの接点に切り替える。
+   * 2回続けて同じ回避をされたら食い下がらずに終話する。
+   */
+  private handleHpReference(fired: GuardrailId[]): DialogReply {
+    this.hpReferenced = true;
+    this.hpDeflections++;
+    this.unknownStreak = 0;
+
+    if (this.hpDeflections >= 2 || this.refusalStreak >= 1) {
+      return this.say("reject", this.toPhase("P0X"), fired, "2回続けてHP参照で回避 → 粘らず丁寧に終話");
+    }
+    this.refusalStreak++;
+    return this.speakOnly(
+      `承知いたしました。サイトより確認させていただきますね。差し支えなければ、${DEMO_SCENARIO.contactTitle}様と一度${DEMO_SCENARIO.meetingMinutes}分ほどオンラインでご挨拶だけでもお時間いただけないでしょうか？`,
+      this.toPhase("P7"),
+      fired,
+      "HP参照 → 送付先は聞かず、オンラインでの日程打診に切り替え",
+    );
   }
 
   // ---------- 断り・導入済みへの対応 ----------

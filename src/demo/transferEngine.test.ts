@@ -64,10 +64,17 @@ test("タイプB: 用件を問われたら1回だけ説明する", () => {
   assert.equal(first.outcome, "calling");
   assert.equal(engine.finished, false);
 
-  // 2回目は食い下がらずに終話する
-  const second = engine.respond("ですから、何のご用件ですか");
+  // 2回目は勝手に終話せず、内容を一言で示して取次ぎを促し直す
+  const second = engine.respond("どんな確認ですか？");
   assert.notEqual(second.utterance, VOICE_LINES.overview.text);
-  assert.equal(second.utterance, VOICE_LINES.reject.text);
+  assert.notEqual(second.utterance, VOICE_LINES.reject.text);
+  assert.match(second.utterance, /制度導入状況/);
+  assert.match(second.utterance, /お繋ぎいただけ/);
+  assert.equal(engine.finished, false);
+
+  // それでも取次ぎに至らなければ、粘らずに終話する
+  const third = engine.respond("具体的な内容は何ですか");
+  assert.equal(third.utterance, VOICE_LINES.reject.text);
   assert.equal(engine.finished, true);
 });
 
@@ -136,4 +143,81 @@ test("タイプB: 応答は必ず禁止ワードフィルタを通る", () => {
     const r = engine.respond(text);
     assert.deepEqual(r.blocked, []);
   }
+});
+
+// ---------- 担当不明 ----------
+
+const UNKNOWN_CONTACT_CASES = [
+  "担当が誰かわからないんですが",
+  "担当者が分かりません",
+  "どこの部署でしょうか",
+  "どちらの部署におつなぎすれば？",
+  "誰に繋げばいいですか",
+  "担当部署が分からないのですが",
+  "どなたにお伝えすればよいですか",
+  "担当窓口はどこになりますか",
+];
+
+for (const text of UNKNOWN_CONTACT_CASES) {
+  test(`タイプB 担当不明: 「${text}」に具体的な部署・役職を挙げて再依頼する`, () => {
+    const { engine, first } = fresh();
+    const r = engine.respond(text);
+
+    // 冒頭の挨拶をオウム返ししない
+    assert.notEqual(r.utterance, first.utterance, "冒頭の挨拶を繰り返している");
+    assert.notEqual(r.utterance, VOICE_LINES.greeting.text);
+    // 具体的な取次ぎ先を挙げる
+    assert.match(r.utterance, /総務/);
+    assert.match(r.utterance, /人事/);
+    assert.match(r.utterance, /代表者/);
+    assert.match(r.utterance, /お繋ぎいただけ/);
+    assert.equal(engine.finished, false, "終話してしまっている");
+  });
+}
+
+test("タイプB 担当不明: 部署提示のあとに取次いでもらえたら引き継ぐ", () => {
+  const { engine } = fresh();
+  engine.respond("担当が誰かわからないんですが");
+  const r = engine.respond("では社長に代わりますね");
+  assert.equal(r.handover, true);
+});
+
+test("タイプB 担当不明: 部署を挙げても決まらなければ粘らず終話する", () => {
+  const { engine } = fresh();
+  engine.respond("担当が誰かわからないんですが");
+  const closed = engine.respond("うーん、誰に繋げばいいのか…");
+  assert.equal(closed.utterance, VOICE_LINES.reject.text);
+  assert.equal(engine.finished, true);
+});
+
+// ---------- 本人応答 ----------
+
+const SELF_IDENTIFY_CASES = [
+  "私です",
+  "私ですが",
+  "はい、私ですけど",
+  "自分が担当です",
+  "私が担当です",
+  "私でお伺いします",
+  "僕です",
+  "当方です",
+  "担当ですが",
+  "担当です",
+];
+
+for (const text of SELF_IDENTIFY_CASES) {
+  test(`タイプB 本人応答: 「${text}」を接続成功として引き継ぐ`, () => {
+    assert.ok(detectHandover(text), "取次ぎ成功として検知されない");
+    const { engine } = fresh();
+    const r = engine.respond(text);
+    assert.equal(r.handover, true, `引き継ぎ状態になっていない: ${r.matched}`);
+    assert.equal(r.outcome, "handover");
+    assert.equal(r.utterance, "", "引き継ぎ時に AI が発話している");
+    assert.equal(r.audioFile, undefined, "引き継ぎ時に音声を再生しようとしている");
+  });
+}
+
+test("タイプB 本人応答: 「私では分かりません」は引き継ぎにしない", () => {
+  assert.ok(!detectHandover("私では分かりません"), "決裁権なしを接続成功と誤判定している");
+  assert.ok(!detectHandover("担当ではありません"), "担当外を接続成功と誤判定している");
 });
