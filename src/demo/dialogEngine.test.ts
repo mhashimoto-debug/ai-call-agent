@@ -311,37 +311,31 @@ test("R2 の切り返しは1通話で一度しか再生されない", () => {
   assert.equal(busyCount, 1, `R2 のセリフが ${busyCount} 回再生されている`);
 });
 
-test("R2 の次のターンは従業員数の確認、その次は概要確認へ進む", () => {
-  const { dialog } = fresh();
+test("2回連続の多忙は食い下がらず、収録済みの終話へ直接つなぐ", () => {
+  const { state, dialog } = fresh();
   dialog.greeting();
 
+  // 1回目: 30秒だけ要点を伝えて食い下がる
   const busy = dialog.respond("ちょっと今忙しいんだよね");
   assert.equal(busy.utterance, VOICE_LINES.r2Busy.text);
   assert.equal(busy.audioFile, `${AUDIO_BASE}r2_busy.mp3`);
 
-  // 2ターン目: 同じ切り返しではなく従業員数の確認（P3相当）
-  const headcount = dialog.respond("だから今バタバタしてるんだって");
-  assert.equal(headcount.utterance, VOICE_LINES.r1NoSystem.text);
-  assert.match(headcount.utterance, /従業員数/);
-  assert.match(headcount.matched, /連続再生を抑止/);
+  // 2回目: 別の話題に引き延ばさず丁寧に終話する
+  const closed = dialog.respond("だから今バタバタしてるんだって");
+  assert.equal(closed.utterance, VOICE_LINES.reject.text);
+  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.match(closed.matched, /2回連続の多忙/);
+  assert.equal(state.ended, true);
 
-  // 3ターン目: 概要確認（P1相当）
-  const overview = dialog.respond("いや、時間がないんだよ");
-  assert.equal(overview.utterance, VOICE_LINES.overview.text);
-  assert.equal(overview.phase, "P1");
+  // 人数確認や概要説明に引き延ばしていないこと
+  assert.notEqual(closed.utterance, VOICE_LINES.r1NoSystem.text);
+  assert.notEqual(closed.utterance, VOICE_LINES.overview.text);
 });
 
-test("多忙が続いても同じセリフが2回連続せず、必ず録音で会話が進む", () => {
-  const { dialog } = fresh();
+test("多忙が続いても同じセリフが2回連続せず、2ターンで終話に着地する", () => {
+  const { state, dialog } = fresh();
   dialog.greeting();
-  const inputs = [
-    "ちょっと今忙しいんだよね",
-    "いや、だから今バタバタしてて",
-    "うーん、時間ないんだよ",
-    "だから時間がないって",
-    "今は無理だよ、立て込んでる",
-    "忙しいんだって",
-  ];
+  const inputs = ["ちょっと今忙しいんだよね", "いや、だから今バタバタしてて"];
 
   let previous = "";
   for (const input of inputs) {
@@ -350,6 +344,44 @@ test("多忙が続いても同じセリフが2回連続せず、必ず録音で�
     assert.ok(r.audioFile, `録音ではなく音声合成に落ちている: ${r.matched}`);
     previous = r.utterance;
   }
+  assert.equal(state.ended, true);
+});
+
+test("謝罪から入る台本が続けて再生されない（多忙・日程NG・想定外の流れ）", () => {
+  const opensWithApology = (t: string): boolean =>
+    /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません|恐れ入り)/.test(t);
+
+  const scenarios: { phase: "P0" | "P3" | "P7"; inputs: string[] }[] = [
+    { phase: "P0", inputs: ["ちょっと今忙しいんだよね", "いや、だから今バタバタしてて"] },
+    { phase: "P7", inputs: ["その日は都合が悪いですね", "それも難しいですね", "うーん"] },
+    { phase: "P3", inputs: ["えーっと", "よく分からないですね", "うーん", "……"] },
+  ];
+
+  for (const { phase, inputs } of scenarios) {
+    const { state, dialog } = fresh();
+    state.phase = phase;
+    const said: string[] = [dialog.greeting().utterance];
+    for (const input of inputs) said.push(dialog.respond(input).utterance);
+
+    for (let i = 1; i < said.length; i++) {
+      const prev = said[i - 1] ?? "";
+      const now = said[i] ?? "";
+      assert.ok(
+        !(opensWithApology(prev) && opensWithApology(now)),
+        `謝罪が連続している（${phase}）: 「${prev.slice(0, 16)}」→「${now.slice(0, 16)}」`,
+      );
+    }
+  }
+});
+
+test("代替日程も断られたら同じ提案を繰り返さない", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  const first = dialog.respond("その日は予定が入っておりまして");
+  assert.equal(first.utterance, VOICE_LINES.reschedule.text);
+  const second = dialog.respond("その日も厳しいですね");
+  assert.notEqual(second.utterance, VOICE_LINES.reschedule.text);
+  assert.match(second.matched, /代替日程も合わず/);
 });
 
 test("R2 の直後に人数を答えられたら、そのまま回収して通常進行に戻る", () => {

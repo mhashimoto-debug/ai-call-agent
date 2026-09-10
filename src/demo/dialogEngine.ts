@@ -345,7 +345,7 @@ export class DialogEngine {
     const g = this.byGuardrail(text, fired);
     if (g) return g;
 
-    // R2 再生後にまた「忙しい」と言われた場合は、同じ切り返しを返さず質問側へ進める
+    // R2 の直後にまた「忙しい」と言われた場合は、食い下がらず丁寧に終話する
     if (fired.includes("R2") && this.busyPitchDone) {
       const cont = this.afterBusy(fired);
       if (cont) return cont;
@@ -569,10 +569,14 @@ export class DialogEngine {
 
   /** P6/P7: 日程を詰めている場面。 */
   private p7(text: string, fired: GuardrailId[]): DialogReply {
-    // 日程NG は開いた質問に戻さず、収録済みの代替日程で出し直す
+    // 日程NG は開いた質問に戻さず、収録済みの代替日程で出し直す。
+    // 代替日程も断られた場合は同じ提案を繰り返さず、立て直し（最終的に丁寧な終話）へ回す。
     if (SCHEDULE_NG.test(text) && !SCHEDULE_OK.test(text)) {
-      this.unknownStreak = 0;
-      return this.say("reschedule", "P7", fired, "日程NG → 代替日程を提示");
+      if (!this.said.has("reschedule")) {
+        this.unknownStreak = 0;
+        return this.say("reschedule", "P7", fired, "日程NG → 代替日程を提示");
+      }
+      return this.repair(fired, "代替日程も合わず");
     }
     if ((YES.test(text) || SCHEDULE_OK.test(text) || TIME_SLOT.test(text)) && !NO.test(text)) {
       const sc = DEMO_SCENARIO;
@@ -757,29 +761,36 @@ export class DialogEngine {
   /**
    * R2 の切り返しを流したあとに、また「忙しい」と言われたときの処理。
    *
-   * 同じ切り返しをもう一度返すと、画面にも音声にも同じセリフが並んで会話が止まる。
-   * そのため必ず質問側（従業員数の確認 → 概要確認）へ進め、
-   * どちらも済んでいれば通常のフェーズ処理に渡して立て直させる。
+   * ここで別の話題（人数確認など）に引き延ばすと、断っている相手に話を被せる形になり
+   * 文脈が破綻する。2回続けて断られた時点で食い下がるのをやめ、
+   * 日を改める前提で丁寧に終話する（実データでも、粘った架電はすべて切られている）。
+   *
+   * 直後ではない再発火（会話が進んだあとの「忙しい」）は終話にせず、
+   * 同じ切り返しの再生だけを避けて通常のフェーズ処理に渡す。
    */
   private afterBusy(fired: GuardrailId[]): DialogReply | null {
-    if (!this.state.hearing.H5 && !this.said.has("r1NoSystem")) {
-      this.expecting = "headcount";
-      return this.say(
-        "r1NoSystem",
-        this.toPhase("P3"),
-        fired,
-        "R2 は再生済み → 従業員数の確認へ（同じ切り返しの連続再生を抑止）",
-      );
-    }
-    if (!this.said.has("overview")) {
-      return this.say(
-        "overview",
-        this.toPhase("P1"),
-        fired,
-        "R2 は再生済み → 概要確認へ（同じ切り返しの連続再生を抑止）",
-      );
-    }
-    return null;
+    if (!this.justSaid(VOICE_LINES.r2Busy.text)) return null;
+    return this.say(
+      "reject",
+      this.toPhase("P0X"),
+      fired,
+      "2回連続の多忙 → 食い下がらず日を改める前提で丁寧に終話",
+    );
+  }
+
+  /**
+   * 謝罪から入る台本かどうか。
+   * 「あ、失礼いたしました！」が続けて流れると、何に謝っているのか分からず不自然になるため、
+   * 台本を選ぶ段階で連続を避ける（読み上げ側で文頭を削ると音声とテキストがずれるのでやらない）。
+   */
+  private static opensWithApology(text: string): boolean {
+    return /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません|恐れ入り)/.test(text);
+  }
+
+  /** 直前の AI 発話が謝罪から入っていたか。 */
+  private justApologized(): boolean {
+    const last = [...this.state.turns].reverse().find((t) => t.speaker === "agent");
+    return last ? DialogEngine.opensWithApology(last.text) : false;
   }
 
   /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
@@ -817,8 +828,9 @@ export class DialogEngine {
     if (this.unknownStreak === 1 && anchor && !this.justSaid(VOICE_LINES[anchor].text)) {
       return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, { replay: true });
     }
-    // 以降は、まだ使っていない録音を順に使って会話を前に進める
-    if (!this.said.has("r1NoSystem")) {
+    // 以降は、まだ使っていない録音を順に使って会話を前に進める。
+    // ただし直前が謝罪から入る台本だったときは、謝罪が二重になるので人数確認は飛ばす。
+    if (!this.said.has("r1NoSystem") && !this.justApologized()) {
       this.expecting = "headcount";
       return this.say("r1NoSystem", this.state.phase, fired, `${reason} → 最小の質問（人数）に切り替え`);
     }
@@ -887,7 +899,8 @@ export class DialogEngine {
     });
     this.state.blockedViolationCount += blocked.length;
     this.state.phase = t.phase;
-    if (t.phase === "END" || t.phase === "P0X") this.state.ended = t.phase === "END";
+    // P0X（撤退）は「失礼いたします」まで言い切る撤退フレーズなので、END と同じく終話扱いにする
+    if (t.phase === "END" || t.phase === "P0X") this.state.ended = true;
 
     return {
       utterance,

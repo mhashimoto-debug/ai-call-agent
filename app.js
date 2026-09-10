@@ -1222,7 +1222,7 @@
   }
   var AGE_ERA = /(\d{2})\s*代/;
   var BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
-  var DialogEngine = class {
+  var DialogEngine = class _DialogEngine {
     constructor(state2) {
       this.state = state2;
     }
@@ -1452,8 +1452,11 @@
     /** P6/P7: 日程を詰めている場面。 */
     p7(text, fired) {
       if (SCHEDULE_NG.test(text) && !SCHEDULE_OK.test(text)) {
-        this.unknownStreak = 0;
-        return this.say("reschedule", "P7", fired, "\u65E5\u7A0BNG \u2192 \u4EE3\u66FF\u65E5\u7A0B\u3092\u63D0\u793A");
+        if (!this.said.has("reschedule")) {
+          this.unknownStreak = 0;
+          return this.say("reschedule", "P7", fired, "\u65E5\u7A0BNG \u2192 \u4EE3\u66FF\u65E5\u7A0B\u3092\u63D0\u793A");
+        }
+        return this.repair(fired, "\u4EE3\u66FF\u65E5\u7A0B\u3082\u5408\u308F\u305A");
       }
       if ((YES.test(text) || SCHEDULE_OK.test(text) || TIME_SLOT.test(text)) && !NO.test(text)) {
         const sc = DEMO_SCENARIO;
@@ -1617,29 +1620,34 @@
     /**
      * R2 の切り返しを流したあとに、また「忙しい」と言われたときの処理。
      *
-     * 同じ切り返しをもう一度返すと、画面にも音声にも同じセリフが並んで会話が止まる。
-     * そのため必ず質問側（従業員数の確認 → 概要確認）へ進め、
-     * どちらも済んでいれば通常のフェーズ処理に渡して立て直させる。
+     * ここで別の話題（人数確認など）に引き延ばすと、断っている相手に話を被せる形になり
+     * 文脈が破綻する。2回続けて断られた時点で食い下がるのをやめ、
+     * 日を改める前提で丁寧に終話する（実データでも、粘った架電はすべて切られている）。
+     *
+     * 直後ではない再発火（会話が進んだあとの「忙しい」）は終話にせず、
+     * 同じ切り返しの再生だけを避けて通常のフェーズ処理に渡す。
      */
     afterBusy(fired) {
-      if (!this.state.hearing.H5 && !this.said.has("r1NoSystem")) {
-        this.expecting = "headcount";
-        return this.say(
-          "r1NoSystem",
-          this.toPhase("P3"),
-          fired,
-          "R2 \u306F\u518D\u751F\u6E08\u307F \u2192 \u5F93\u696D\u54E1\u6570\u306E\u78BA\u8A8D\u3078\uFF08\u540C\u3058\u5207\u308A\u8FD4\u3057\u306E\u9023\u7D9A\u518D\u751F\u3092\u6291\u6B62\uFF09"
-        );
-      }
-      if (!this.said.has("overview")) {
-        return this.say(
-          "overview",
-          this.toPhase("P1"),
-          fired,
-          "R2 \u306F\u518D\u751F\u6E08\u307F \u2192 \u6982\u8981\u78BA\u8A8D\u3078\uFF08\u540C\u3058\u5207\u308A\u8FD4\u3057\u306E\u9023\u7D9A\u518D\u751F\u3092\u6291\u6B62\uFF09"
-        );
-      }
-      return null;
+      if (!this.justSaid(VOICE_LINES.r2Busy.text)) return null;
+      return this.say(
+        "reject",
+        this.toPhase("P0X"),
+        fired,
+        "2\u56DE\u9023\u7D9A\u306E\u591A\u5FD9 \u2192 \u98DF\u3044\u4E0B\u304C\u3089\u305A\u65E5\u3092\u6539\u3081\u308B\u524D\u63D0\u3067\u4E01\u5BE7\u306B\u7D42\u8A71"
+      );
+    }
+    /**
+     * 謝罪から入る台本かどうか。
+     * 「あ、失礼いたしました！」が続けて流れると、何に謝っているのか分からず不自然になるため、
+     * 台本を選ぶ段階で連続を避ける（読み上げ側で文頭を削ると音声とテキストがずれるのでやらない）。
+     */
+    static opensWithApology(text) {
+      return /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません|恐れ入り)/.test(text);
+    }
+    /** 直前の AI 発話が謝罪から入っていたか。 */
+    justApologized() {
+      const last = [...this.state.turns].reverse().find((t) => t.speaker === "agent");
+      return last ? _DialogEngine.opensWithApology(last.text) : false;
     }
     /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
     justSaid(text) {
@@ -1670,7 +1678,7 @@
       if (this.unknownStreak === 1 && anchor && !this.justSaid(VOICE_LINES[anchor].text)) {
         return this.say(anchor, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u8A00\u3044\u76F4\u3059`, { replay: true });
       }
-      if (!this.said.has("r1NoSystem")) {
+      if (!this.said.has("r1NoSystem") && !this.justApologized()) {
         this.expecting = "headcount";
         return this.say("r1NoSystem", this.state.phase, fired, `${reason} \u2192 \u6700\u5C0F\u306E\u8CEA\u554F\uFF08\u4EBA\u6570\uFF09\u306B\u5207\u308A\u66FF\u3048`);
       }
@@ -1712,7 +1720,7 @@
       });
       this.state.blockedViolationCount += blocked.length;
       this.state.phase = t.phase;
-      if (t.phase === "END" || t.phase === "P0X") this.state.ended = t.phase === "END";
+      if (t.phase === "END" || t.phase === "P0X") this.state.ended = true;
       return {
         utterance,
         phase: t.phase,
