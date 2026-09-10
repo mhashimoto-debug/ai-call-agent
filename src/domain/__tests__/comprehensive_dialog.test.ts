@@ -418,3 +418,101 @@ test("メールが使えない場合は郵送に切り替えて決算月だけ�
   assert.match(r.utterance, /郵送/);
   assert.doesNotMatch(r.matched, /読み取れず/);
 });
+
+// ============================================================
+// 9. 同じ応答の繰り返し防止
+// ============================================================
+
+const REPEATED_GUARDRAILS: { label: string; text: string }[] = [
+  { label: "R1 制度なし", text: "うちは何もやってないです" },
+  { label: "R3 専門家任せ", text: "社労士に聞いてみます" },
+  { label: "R4 資料請求", text: "資料を送ってください" },
+  { label: "R5 他制度の勘違い", text: "それってiDeCoのことでしょう" },
+];
+
+for (const { label, text } of REPEATED_GUARDRAILS) {
+  test(`繰り返し防止: ${label} が2回続いても同じ応答を返さない`, () => {
+    const call = new Call();
+    const first = call.say(text);
+    const second = call.say(text);
+    assert.notEqual(second.utterance, first.utterance, `同じ応答を繰り返している: ${second.matched}`);
+  });
+}
+
+test("繰り返し防止: 公的機関との誤認の訂正を繰り返さない", () => {
+  const call = new Call();
+  const first = call.say("お国がやってる制度ですか");
+  const second = call.say("役所の方ですよね");
+  assert.notEqual(second.utterance, first.utterance);
+});
+
+test("繰り返し防止: 不在対応で同じ質問を繰り返さない", () => {
+  const call = new Call();
+  call.say("今不在にしてます");
+  const a = call.say("分かりません");
+  const b = call.say("さあ、なんとも");
+  assert.notEqual(b.utterance, a.utterance, `同じ質問を繰り返している: ${b.matched}`);
+});
+
+test("繰り返し防止: P8 の聞き直しは言い回しを変える", () => {
+  const call = new Call("P7");
+  call.say("はい、その時間で大丈夫です"); // → P8（連絡先の確認）
+  const a = call.say("うーん");
+  const b = call.say("ええと");
+  assert.match(a.matched, /callbackPhone が聞き取れず/);
+  assert.match(b.matched, /callbackPhone が聞き取れず/);
+  assert.notEqual(b.utterance, a.utterance, "同じ文言で聞き直している");
+});
+
+test("誤認の訂正直後に人数を言われても拾って進む（挨拶に巻き戻らない）", () => {
+  const call = new Call();
+  call.say("それ補助金か何かですか？");
+  const r = call.say("二十名です");
+  assert.equal(call.state.hearing.H5, "20名");
+  assert.notEqual(r.utterance, VOICE_LINES.greeting.text);
+  assertNoBreakdown(call, "誤認訂正→人数");
+});
+
+// ============================================================
+// 10. ランダム会話での破綻検査
+// ============================================================
+
+test("ランダムな受け答えを通しても会話が破綻しない", () => {
+  const CORPUS = [
+    "はい、山田商事です", "少々お待ちください", "営業のお電話はお断りしています",
+    "今忙しい", "会議中なんです", "また今度にして", "急いでるんで手短に",
+    "不在です", "席を外しております", "出張中でして", "戻りは夕方です", "本日休みです",
+    "私では分かりません", "決裁権がないので", "受付です",
+    "対策済みです", "間に合ってます", "大丈夫です", "結構です", "いらないです", "やってますので",
+    "何もやってないです", "これから考えます", "顧問税理士に任せてます", "資料送ってください",
+    "お国の制度ですか", "それiDeCoでしょ", "20名です", "私一人です", "私と妻だけ", "15人くらい",
+    "3月です", "info@example.co.jp です", "メールは苦手で",
+    "はい大丈夫です", "水曜は厳しい", "調整してみます", "オンラインって何？",
+    "090-1234-5678 です", "ふーん", "えーっと", "……", "うーん", "よく分からん",
+  ];
+
+  // 再現できるよう擬似乱数は固定シードで回す
+  let seed = 20260910;
+  const rnd = (): number => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+  for (let run = 0; run < 400; run++) {
+    const call = new Call();
+    const script: string[] = [];
+    const counts = new Map<string, number>();
+    let previous = call.replies[0]?.utterance ?? "";
+
+    for (let turn = 0; turn < 6 && !call.state.ended; turn++) {
+      const text = CORPUS[Math.floor(rnd() * CORPUS.length)] ?? "";
+      script.push(text);
+      const r = call.say(text);
+      const ctx = `[${script.join(" / ")}]`;
+
+      assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `${ctx} 冒頭の挨拶に巻き戻っている`);
+      assert.notEqual(r.utterance, previous, `${ctx} 同じ応答を続けて返している`);
+      const n = (counts.get(r.utterance) ?? 0) + 1;
+      counts.set(r.utterance, n);
+      assert.ok(n < 3, `${ctx} 同じ応答を${n}回繰り返している`);
+      previous = r.utterance;
+    }
+  }
+});

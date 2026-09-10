@@ -26,8 +26,10 @@
       ],
       transition: "\u53D6\u6B21\u304C\u767A\u751F\u3057\u305F\u3089 P1 \u3078\u3002\u5F37\u56FA\u306A\u55B6\u696D\u96FB\u8A71\u62D2\u5426\u306A\u3089 P0X \u3078\u3002R1/R2 \u306E\u5207\u308A\u8FD4\u3057\u3067\u4EBA\u6570\u3092\u805E\u3044\u305F\u5834\u5408\u306F P3 \u3078\u3002",
       // P3 直行は R1（制度なし）・R2（多忙）の切り返しで、受付段階からそのまま
-      // ヒアリング（人数確認）に入った場合の経路
-      allowedNext: ["P0", "P0X", "P1", "P3"],
+      // ヒアリング（人数確認）に入った場合の経路。
+      // P5 直行は、その人数までこの段階で答えてもらえた場合の経路
+      // （フェーズが発話に追いつかないと、同じ質問をもう一度することになる）
+      allowedNext: ["P0", "P0X", "P1", "P3", "P5"],
       targetElapsedSec: 40
     },
     P0X: {
@@ -1270,6 +1272,12 @@
   }
   var AGE_ERA = /(\d{2})\s*代/;
   var BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
+  var REASK_PREFIX = [
+    "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3082\u3046\u4E00\u5EA6\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002",
+    "\u304A\u624B\u6570\u3092\u304A\u304B\u3051\u3044\u305F\u3057\u307E\u3059\u3002",
+    "\u5FF5\u306E\u305F\u3081\u78BA\u8A8D\u3055\u305B\u3066\u304F\u3060\u3055\u3044\u3002"
+  ];
+  var EARLY_PHASES = /* @__PURE__ */ new Set(["P0", "P1"]);
   var DialogEngine = class _DialogEngine {
     constructor(state2) {
       this.state = state2;
@@ -1290,10 +1298,20 @@
      * 同じ通話で二度流すと会話が前に進まずループする。1通話1回に制限する。
      */
     busyPitchDone = false;
+    /** 各スロットを聞き直した回数。前置きを変えて同じ言い回しを続けないために持つ。 */
+    reasked = /* @__PURE__ */ new Map();
+    /** 要点だけを聞き直した切り返し。同じ聞き直しを繰り返さないために持つ。 */
+    recapped = /* @__PURE__ */ new Set();
+    /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
+    replayed = /* @__PURE__ */ new Set();
+    /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
+    publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
     absentMode = false;
     /** 不在対応で何ターン粘ったか。確認が取れないまま長引かせないための上限。 */
     absentTurns = 0;
+    /** 不在対応で何を聞き終えたか。同じ質問を繰り返さないために持つ。 */
+    absentAsked = /* @__PURE__ */ new Set();
     /**
      * 連続して拒絶された回数（多忙・断りをまとめて数える）。
      * 種類が違っても2回続けて断られた時点で食い下がらない。
@@ -1314,7 +1332,15 @@
       }
       if (!fired.includes("R2") && !this.isDecline(text)) this.refusalStreak = 0;
       this.harvested = this.harvest(text);
-      const collected = this.collectExpected(text);
+      let collected = this.collectExpected(text);
+      if (!collected && EARLY_PHASES.has(this.state.phase) && !this.state.hearing.H5) {
+        const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text);
+        if (n !== null && n > 0) {
+          applyExtracted(this.state, { H5: `${n}\u540D` });
+          if (!this.harvested.includes("H5")) this.harvested.push("H5");
+          collected = "headcount";
+        }
+      }
       const g = this.byGuardrail(text, fired);
       if (g) return g;
       if (collected === "headcount") {
@@ -1413,7 +1439,8 @@
       const has = (id) => fired.includes(id);
       if (has("R5")) {
         this.unknownStreak = 0;
-        if (PUBLIC_BODY_CONFUSION.test(text)) {
+        if (PUBLIC_BODY_CONFUSION.test(text) && !this.publicBodyCorrected) {
+          this.publicBodyCorrected = true;
           return this.speakOnly(
             "\u7D1B\u3089\u308F\u3057\u304F\u3066\u7533\u3057\u8A33\u3054\u3056\u3044\u307E\u305B\u3093\u3002\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
             this.state.phase,
@@ -1421,7 +1448,13 @@
             "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09"
           );
         }
-        return this.say("r5OtherScheme", this.state.phase, fired, "R5: iDeCo\u30FB\u500B\u4EBA\u5E74\u91D1\u3068\u306E\u52D8\u9055\u3044\u3092\u8A02\u6B63");
+        const reply = this.guardrailReply(
+          "r5OtherScheme",
+          this.state.phase,
+          fired,
+          "R5: iDeCo\u30FB\u500B\u4EBA\u5E74\u91D1\u3068\u306E\u52D8\u9055\u3044\u3092\u8A02\u6B63"
+        );
+        if (reply) return reply;
       }
       if (has("R7")) {
         this.unknownStreak = 0;
@@ -1444,21 +1477,34 @@
       if (has("R1")) {
         this.unknownStreak = 0;
         this.expecting = "headcount";
-        return this.say(
+        const reply = this.guardrailReply(
           "r1NoSystem",
           this.toPhase("P3"),
           fired,
           "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u672A\u5C0E\u5165\u4F01\u696D\u5411\u3051\u306E\u8A34\u6C42\uFF0B\u4EBA\u6570\u78BA\u8A8D\u3078"
         );
+        if (reply) return reply;
       }
       if (has("R3")) {
         this.unknownStreak = 0;
-        return this.say("r3Expert", this.state.phase, fired, "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u30BB\u30AB\u30F3\u30C9\u30AA\u30D4\u30CB\u30AA\u30F3\u3068\u3057\u3066\u63D0\u6848");
+        const reply = this.guardrailReply(
+          "r3Expert",
+          this.state.phase,
+          fired,
+          "R3: \u5C02\u9580\u5BB6\u3092\u5426\u5B9A\u305B\u305A\u30BB\u30AB\u30F3\u30C9\u30AA\u30D4\u30CB\u30AA\u30F3\u3068\u3057\u3066\u63D0\u6848"
+        );
+        if (reply) return reply;
       }
       if (has("R4")) {
         this.unknownStreak = 0;
         this.expecting = "contact";
-        return this.say("r4Document", this.state.phase, fired, "R4: \u9001\u4ED8\u3092\u53D7\u3051\u305F\u3046\u3048\u3067\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u78BA\u5B9A");
+        const reply = this.guardrailReply(
+          "r4Document",
+          this.state.phase,
+          fired,
+          "R4: \u9001\u4ED8\u3092\u53D7\u3051\u305F\u3046\u3048\u3067\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u78BA\u5B9A"
+        );
+        if (reply) return reply;
       }
       if (has("R2") && !this.busyPitchDone) {
         this.unknownStreak = 0;
@@ -1517,7 +1563,8 @@
           got.push("H3");
         }
       }
-      if (got.length === 0 && !YES.test(text)) {
+      const known = this.state.hearing.H3 ?? this.state.hearing.H4 ?? this.state.hearing.H5;
+      if (got.length === 0 && (!YES.test(text) || !known)) {
         return this.repair(fired, "\u5E74\u9F62\u5C64\u30FB\u4EBA\u6570\u306E\u56DE\u7B54\u3068\u3057\u3066\u8AAD\u307F\u53D6\u308C\u305A");
       }
       this.unknownStreak = 0;
@@ -1615,8 +1662,11 @@
             applyExtracted(this.state, facts);
             notes.push(`${this.pending} \u3092\u53D6\u5F97`);
           } else {
+            const attempt = this.reasked.get(this.pending) ?? 0;
+            this.reasked.set(this.pending, attempt + 1);
+            const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "";
             return this.speakOnly(
-              this.askText(this.pending),
+              `${prefix}${this.askText(this.pending)}`,
               "P8",
               fired,
               `${this.pending} \u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`
@@ -1773,10 +1823,10 @@
           "\u4E0D\u5728: \u623B\u308A\u6642\u9593\u3068\u6298\u308A\u8FD4\u3057\u5148\u3092\u78BA\u4FDD \u2192 \u6298\u308A\u8FD4\u3057\u3092\u7D04\u675F\u3057\u3066\u7D42\u8A71"
         );
       }
-      if (this.absentTurns >= 3) {
-        return this.say("reject", this.toPhase("P0X"), fired, "\u4E0D\u5728: \u78BA\u8A8D\u304C\u53D6\u308C\u306A\u3044\u305F\u3081\u7C98\u3089\u305A\u7D42\u8A71");
-      }
-      if (!window2) {
+      const askedWindow = this.absentAsked.has("window");
+      const askedContact = this.absentAsked.has("contact");
+      if (!window2 && !askedWindow) {
+        this.absentAsked.add("window");
         return this.speakOnly(
           "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002\u6539\u3081\u3066\u3053\u3061\u3089\u304B\u3089\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002",
           this.state.phase,
@@ -1784,13 +1834,17 @@
           "\u4E0D\u5728: \u623B\u308A\u6642\u9593\u306E\u78BA\u8A8D"
         );
       }
-      this.expecting = "contact";
-      return this.speakOnly(
-        `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002${window2}\u9803\u306B\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u5FF5\u306E\u305F\u3081\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F`,
-        this.state.phase,
-        fired,
-        "\u4E0D\u5728: \u6298\u308A\u8FD4\u3057\u5148\u306E\u78BA\u8A8D"
-      );
+      if (!hasContact && !askedContact) {
+        this.absentAsked.add("contact");
+        this.expecting = "contact";
+        return this.speakOnly(
+          window2 ? `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002${window2}\u9803\u306B\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u5FF5\u306E\u305F\u3081\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F` : "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+          this.state.phase,
+          fired,
+          "\u4E0D\u5728: \u6298\u308A\u8FD4\u3057\u5148\u306E\u78BA\u8A8D"
+        );
+      }
+      return this.say("reject", this.toPhase("P0X"), fired, "\u4E0D\u5728: \u78BA\u8A8D\u304C\u53D6\u308C\u306A\u3044\u305F\u3081\u7C98\u3089\u305A\u7D42\u8A71");
     }
     // ---------- 断り・導入済みへの対応 ----------
     /**
@@ -1866,6 +1920,22 @@
       const last = [...this.state.turns].reverse().find((t) => t.speaker === "agent");
       return last ? _DialogEngine.opensWithApology(last.text) : false;
     }
+    /**
+     * 言い直しの基準にする台本。
+     *
+     * 「実際に最後に流した質問」を使う。フェーズの主質問を使うと、切り返しで
+     * フェーズが進んでいない場面で冒頭の挨拶まで巻き戻ってしまうため。
+     * 挨拶は、まだ挨拶しかしていないときだけ言い直しの対象にする。
+     */
+    repairAnchor() {
+      const last = this.lastLine;
+      const spoken = this.state.turns.filter((t) => t.speaker === "agent").length;
+      const onlyGreeted = spoken <= 1;
+      if (last && !CLOSING_LINES.has(last) && (last !== "greeting" || onlyGreeted)) return last;
+      const phaseAnchor = PHASE_ANCHOR[this.state.phase];
+      if (phaseAnchor === "greeting" && !onlyGreeted) return void 0;
+      return phaseAnchor;
+    }
     /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
     justSaid(text) {
       for (let i = this.state.turns.length - 1; i >= 0; i--) {
@@ -1891,17 +1961,24 @@
      */
     repair(fired, reason) {
       this.unknownStreak++;
-      const anchor = this.lastLine && !CLOSING_LINES.has(this.lastLine) ? this.lastLine : PHASE_ANCHOR[this.state.phase];
-      if (this.unknownStreak === 1 && anchor) {
+      const anchor = this.repairAnchor();
+      if (this.unknownStreak === 1 && anchor && !this.replayed.has(anchor)) {
+        this.replayed.add(anchor);
         if (!this.justSaid(VOICE_LINES[anchor].text)) {
           return this.say(anchor, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u8A00\u3044\u76F4\u3059`, {
             replay: true
           });
         }
-        const recap = RECAP[anchor];
-        if (recap) {
-          return this.speakOnly(recap, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u77ED\u304F\u805E\u304D\u76F4\u3059`);
-        }
+        const recap = this.recapReply(
+          anchor,
+          this.state.phase,
+          fired,
+          `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u77ED\u304F\u805E\u304D\u76F4\u3059`
+        );
+        if (recap) return recap;
+      }
+      if (!this.said.has("overview")) {
+        return this.say("overview", this.toPhase("P1"), fired, `${reason} \u2192 \u6982\u8981\u304B\u3089\u4ED5\u5207\u308A\u76F4\u3059`);
       }
       if (!this.said.has("r1NoSystem") && !this.justApologized()) {
         this.expecting = "headcount";
@@ -1922,8 +1999,27 @@
       const audioFile = !alreadySaid || opts.replay ? audioUrl(line.file) : void 0;
       return this.emit(line.text, proposed, fired, matched, audioFile);
     }
+    /**
+     * 切り返しを流す。すでに同じ台本を流していれば、同じ文言を繰り返さず要点だけ聞き直す。
+     * 同じ切り返しが何度も流れると会話が進まなくなるため。
+     */
+    guardrailReply(id, proposed, fired, matched) {
+      if (!this.said.has(id)) return this.say(id, proposed, fired, matched);
+      return this.recapReply(id, proposed, fired, `${matched}\uFF08\u518D\u63B2\u306E\u305F\u3081\u8981\u70B9\u306E\u307F\uFF09`);
+    }
+    /**
+     * 台本の要点だけを一言で聞き直す。
+     * 1つの台本につき1回まで。直前と同じ文言になる場合は出さない（言えることが尽きたら次へ進める）。
+     */
+    recapReply(id, proposed, fired, matched) {
+      const recap = RECAP[id];
+      if (!recap || this.recapped.has(id) || this.justSaid(recap)) return null;
+      this.recapped.add(id);
+      return this.speakOnly(recap, proposed, fired, matched);
+    }
     /** 収録の無い発話（P8 の個別質問など）。音声合成で読み上げる。 */
     speakOnly(raw, proposed, fired, matched) {
+      this.lastLine = null;
       return this.emit(raw, proposed, fired, matched, void 0);
     }
     emit(raw, proposed, fired, matched, audioFile) {

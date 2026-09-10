@@ -370,6 +370,22 @@ const AGE_ERA = /(\d{2})\s*代/;
 /** 文脈語のない人数（「20人くらいです」）。その場面で人数を聞いているときだけ使う。 */
 const BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
 
+/**
+ * 聞き取れなかったときの前置き。
+ * 同じ質問を一字一句同じ言い方で繰り返すと機械的に聞こえるため、聞き直すたびに変える。
+ */
+const REASK_PREFIX = [
+  "恐れ入ります、もう一度お伺いできますでしょうか。",
+  "お手数をおかけいたします。",
+  "念のため確認させてください。",
+];
+
+/**
+ * 年齢層・人数をこちらから聞く前の段階。ここでは人数の言いっぱなしも拾う。
+ * P2/P3 は専用の処理（年齢層も一緒に拾う）があるので含めない。
+ */
+const EARLY_PHASES = new Set<PhaseId>(["P0", "P1"]);
+
 /** P8 で今どのスロットを聞いているか。 */
 type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow";
 
@@ -392,10 +408,20 @@ export class DialogEngine {
    * 同じ通話で二度流すと会話が前に進まずループする。1通話1回に制限する。
    */
   private busyPitchDone = false;
+  /** 各スロットを聞き直した回数。前置きを変えて同じ言い回しを続けないために持つ。 */
+  private reasked = new Map<PendingSlot, number>();
+  /** 要点だけを聞き直した切り返し。同じ聞き直しを繰り返さないために持つ。 */
+  private recapped = new Set<VoiceLineId>();
+  /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
+  private replayed = new Set<VoiceLineId>();
+  /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
+  private publicBodyCorrected = false;
   /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
   private absentMode = false;
   /** 不在対応で何ターン粘ったか。確認が取れないまま長引かせないための上限。 */
   private absentTurns = 0;
+  /** 不在対応で何を聞き終えたか。同じ質問を繰り返さないために持つ。 */
+  private absentAsked = new Set<"window" | "contact">();
   /**
    * 連続して拒絶された回数（多忙・断りをまとめて数える）。
    * 種類が違っても2回続けて断られた時点で食い下がらない。
@@ -425,7 +451,17 @@ export class DialogEngine {
     // まとめ聞き対応: 質問していない項目でも、言われた時点で拾って保持する
     this.harvested = this.harvest(text);
     // 切り返しで投げた質問への回答は、フェーズに関係なくここで回収する
-    const collected = this.collectExpected(text);
+    let collected = this.collectExpected(text);
+    // 質問していなくても、ヒアリング前の段階で人数だけ言われたら拾う
+    // （誤認の訂正直後など、こちらが聞いていないタイミングで答えられることがある）
+    if (!collected && EARLY_PHASES.has(this.state.phase) && !this.state.hearing.H5) {
+      const n = toNumber(BARE_COUNT.exec(text)?.[1] ?? "") ?? phraseCount(text);
+      if (n !== null && n > 0) {
+        applyExtracted(this.state, { H5: `${n}名` });
+        if (!this.harvested.includes("H5")) this.harvested.push("H5");
+        collected = "headcount";
+      }
+    }
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
@@ -547,7 +583,8 @@ export class DialogEngine {
     // 公的機関との誤認だけは収録が無いので、立場の切り分けを読み上げで必ず行う。
     if (has("R5")) {
       this.unknownStreak = 0;
-      if (PUBLIC_BODY_CONFUSION.test(text)) {
+      if (PUBLIC_BODY_CONFUSION.test(text) && !this.publicBodyCorrected) {
+        this.publicBodyCorrected = true;
         return this.speakOnly(
           "紛らわしくて申し訳ございません。制度は厚生労働省の管轄ですが、私どもは民間の導入支援事業者でございます。",
           this.state.phase,
@@ -555,7 +592,13 @@ export class DialogEngine {
           "R5: 公的機関との誤認を即座に訂正（録音なし・音声合成）",
         );
       }
-      return this.say("r5OtherScheme", this.state.phase, fired, "R5: iDeCo・個人年金との勘違いを訂正");
+      const reply = this.guardrailReply(
+        "r5OtherScheme",
+        this.state.phase,
+        fired,
+        "R5: iDeCo・個人年金との勘違いを訂正",
+      );
+      if (reply) return reply;
     }
     // R7: 不在／決裁権なしなら、ヒアリングを止めて次回接触の確定に切り替える
     if (has("R7")) {
@@ -583,23 +626,36 @@ export class DialogEngine {
     if (has("R1")) {
       this.unknownStreak = 0;
       this.expecting = "headcount";
-      return this.say(
+      const reply = this.guardrailReply(
         "r1NoSystem",
         this.toPhase("P3"),
         fired,
         "R1: 断り判定を禁止し、未導入企業向けの訴求＋人数確認へ",
       );
+      if (reply) return reply;
     }
     // R3: 専門家を否定せず、セカンドオピニオンの位置に回る
     if (has("R3")) {
       this.unknownStreak = 0;
-      return this.say("r3Expert", this.state.phase, fired, "R3: 専門家を否定せずセカンドオピニオンとして提案");
+      const reply = this.guardrailReply(
+        "r3Expert",
+        this.state.phase,
+        fired,
+        "R3: 専門家を否定せずセカンドオピニオンとして提案",
+      );
+      if (reply) return reply;
     }
     // R4: 資料送付で終わらせず、送付先メールアドレスの確定をセットで取る
     if (has("R4")) {
       this.unknownStreak = 0;
       this.expecting = "contact";
-      return this.say("r4Document", this.state.phase, fired, "R4: 送付を受けたうえで送付先メールアドレスを確定");
+      const reply = this.guardrailReply(
+        "r4Document",
+        this.state.phase,
+        fired,
+        "R4: 送付を受けたうえで送付先メールアドレスを確定",
+      );
+      if (reply) return reply;
     }
     // R2: 忙しい相手には要点だけを短く伝え、人数確認まで一気に運ぶ。
     // ただし再生は1通話1回だけ（2回目以降は afterBusy で質問側へ進める）
@@ -672,7 +728,9 @@ export class DialogEngine {
       }
     }
 
-    if (got.length === 0 && !YES.test(text)) {
+    // 相槌だけで人数が分からないまま次に進むと、聞くべきことを聞き逃す
+    const known = this.state.hearing.H3 ?? this.state.hearing.H4 ?? this.state.hearing.H5;
+    if (got.length === 0 && (!YES.test(text) || !known)) {
       return this.repair(fired, "年齢層・人数の回答として読み取れず");
     }
     this.unknownStreak = 0;
@@ -789,9 +847,13 @@ export class DialogEngine {
           applyExtracted(this.state, facts);
           notes.push(`${this.pending} を取得`);
         } else {
-          // 取れなかった項目は次へ進めず聞き直す（G2 の担保）
+          // 取れなかった項目は次へ進めず聞き直す（G2 の担保）。
+          // 前置きを変えて、同じ言い回しが続かないようにする
+          const attempt = this.reasked.get(this.pending) ?? 0;
+          this.reasked.set(this.pending, attempt + 1);
+          const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "";
           return this.speakOnly(
-            this.askText(this.pending),
+            `${prefix}${this.askText(this.pending)}`,
             "P8",
             fired,
             `${this.pending} が聞き取れず再質問`,
@@ -967,10 +1029,11 @@ export class DialogEngine {
         "不在: 戻り時間と折り返し先を確保 → 折り返しを約束して終話",
       );
     }
-    if (this.absentTurns >= 3) {
-      return this.say("reject", this.toPhase("P0X"), fired, "不在: 確認が取れないため粘らず終話");
-    }
-    if (!window) {
+    // 同じ質問を繰り返さない。聞けていない方を1回ずつ聞き、それでも取れなければ終話する
+    const askedWindow = this.absentAsked.has("window");
+    const askedContact = this.absentAsked.has("contact");
+    if (!window && !askedWindow) {
+      this.absentAsked.add("window");
       return this.speakOnly(
         "恐れ入ります、何時頃でしたらお戻りになりますでしょうか。改めてこちらからお電話いたします。",
         this.state.phase,
@@ -978,13 +1041,19 @@ export class DialogEngine {
         "不在: 戻り時間の確認",
       );
     }
-    this.expecting = "contact";
-    return this.speakOnly(
-      `承知いたしました。${window}頃に改めてお電話いたします。念のため、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？`,
-      this.state.phase,
-      fired,
-      "不在: 折り返し先の確認",
-    );
+    if (!hasContact && !askedContact) {
+      this.absentAsked.add("contact");
+      this.expecting = "contact";
+      return this.speakOnly(
+        window
+          ? `承知いたしました。${window}頃に改めてお電話いたします。念のため、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？`
+          : "恐れ入ります、ご担当者様のお電話番号かメールアドレスだけ伺えますでしょうか？",
+        this.state.phase,
+        fired,
+        "不在: 折り返し先の確認",
+      );
+    }
+    return this.say("reject", this.toPhase("P0X"), fired, "不在: 確認が取れないため粘らず終話");
   }
 
   // ---------- 断り・導入済みへの対応 ----------
@@ -1070,6 +1139,24 @@ export class DialogEngine {
     return last ? DialogEngine.opensWithApology(last.text) : false;
   }
 
+  /**
+   * 言い直しの基準にする台本。
+   *
+   * 「実際に最後に流した質問」を使う。フェーズの主質問を使うと、切り返しで
+   * フェーズが進んでいない場面で冒頭の挨拶まで巻き戻ってしまうため。
+   * 挨拶は、まだ挨拶しかしていないときだけ言い直しの対象にする。
+   */
+  private repairAnchor(): VoiceLineId | undefined {
+    const last = this.lastLine;
+    // 読み上げだけの応答は said に入らないため、実際の発話数で数える
+    const spoken = this.state.turns.filter((t) => t.speaker === "agent").length;
+    const onlyGreeted = spoken <= 1;
+    if (last && !CLOSING_LINES.has(last) && (last !== "greeting" || onlyGreeted)) return last;
+    const phaseAnchor = PHASE_ANCHOR[this.state.phase];
+    if (phaseAnchor === "greeting" && !onlyGreeted) return undefined;
+    return phaseAnchor;
+  }
+
   /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
   private justSaid(text: string): boolean {
     for (let i = this.state.turns.length - 1; i >= 0; i--) {
@@ -1098,26 +1185,28 @@ export class DialogEngine {
    */
   private repair(fired: GuardrailId[], reason: string): DialogReply {
     this.unknownStreak++;
-    // 言い直しの基準は「実際に最後に流した質問」。
-    // フェーズの主質問を使うと、切り返し(R2 等)でフェーズが進んでいない場面で
-    // 冒頭の挨拶まで巻き戻ってしまう。
-    const anchor =
-      this.lastLine && !CLOSING_LINES.has(this.lastLine)
-        ? this.lastLine
-        : PHASE_ANCHOR[this.state.phase];
+    const anchor = this.repairAnchor();
 
     // 1回目: 直前に流した質問をもう一度（電話では自然な立て直し）
-    if (this.unknownStreak === 1 && anchor) {
+    if (this.unknownStreak === 1 && anchor && !this.replayed.has(anchor)) {
+      this.replayed.add(anchor);
       if (!this.justSaid(VOICE_LINES[anchor].text)) {
         return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, {
           replay: true,
         });
       }
       // たった今流したばかりの台本は繰り返さず、同じ内容を一言で聞き直す
-      const recap = RECAP[anchor];
-      if (recap) {
-        return this.speakOnly(recap, this.state.phase, fired, `${reason} → 直前の質問を短く聞き直す`);
-      }
+      const recap = this.recapReply(
+        anchor,
+        this.state.phase,
+        fired,
+        `${reason} → 直前の質問を短く聞き直す`,
+      );
+      if (recap) return recap;
+    }
+    // 会話が始まっているのに概要をまだ伝えていなければ、そこから仕切り直す
+    if (!this.said.has("overview")) {
+      return this.say("overview", this.toPhase("P1"), fired, `${reason} → 概要から仕切り直す`);
     }
     // 以降は、まだ使っていない録音を順に使って会話を前に進める。
     // ただし直前が謝罪から入る台本だったときは、謝罪が二重になるので人数確認は飛ばす。
@@ -1151,6 +1240,36 @@ export class DialogEngine {
     return this.emit(line.text, proposed, fired, matched, audioFile);
   }
 
+  /**
+   * 切り返しを流す。すでに同じ台本を流していれば、同じ文言を繰り返さず要点だけ聞き直す。
+   * 同じ切り返しが何度も流れると会話が進まなくなるため。
+   */
+  private guardrailReply(
+    id: VoiceLineId,
+    proposed: PhaseId,
+    fired: GuardrailId[],
+    matched: string,
+  ): DialogReply | null {
+    if (!this.said.has(id)) return this.say(id, proposed, fired, matched);
+    return this.recapReply(id, proposed, fired, `${matched}（再掲のため要点のみ）`);
+  }
+
+  /**
+   * 台本の要点だけを一言で聞き直す。
+   * 1つの台本につき1回まで。直前と同じ文言になる場合は出さない（言えることが尽きたら次へ進める）。
+   */
+  private recapReply(
+    id: VoiceLineId,
+    proposed: PhaseId,
+    fired: GuardrailId[],
+    matched: string,
+  ): DialogReply | null {
+    const recap = RECAP[id];
+    if (!recap || this.recapped.has(id) || this.justSaid(recap)) return null;
+    this.recapped.add(id);
+    return this.speakOnly(recap, proposed, fired, matched);
+  }
+
   /** 収録の無い発話（P8 の個別質問など）。音声合成で読み上げる。 */
   private speakOnly(
     raw: string,
@@ -1158,6 +1277,8 @@ export class DialogEngine {
     fired: GuardrailId[],
     matched: string,
   ): DialogReply {
+    // 収録台本ではないので、言い直しの基準（lastLine）は持ち越さない
+    this.lastLine = null;
     return this.emit(raw, proposed, fired, matched, undefined);
   }
 
