@@ -1236,6 +1236,12 @@
     expecting = null;
     /** 想定外の発話が続いた回数。立て直しの段階を決める。 */
     unknownStreak = 0;
+    /**
+     * R2（多忙）の切り返しを再生済みか。
+     * R2 は「30秒だけ要点をお伝えして…」という一度きりの切り返しなので、
+     * 同じ通話で二度流すと会話が前に進まずループする。1通話1回に制限する。
+     */
+    busyPitchDone = false;
     /** 架電開始の第一声。 */
     greeting() {
       return this.say("greeting", "P0", [], "\u67B6\u96FB\u958B\u59CB");
@@ -1251,6 +1257,10 @@
       this.collectExpected(text);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
+      if (fired.includes("R2") && this.busyPitchDone) {
+        const cont = this.afterBusy(fired);
+        if (cont) return cont;
+      }
       switch (this.state.phase) {
         case "P0":
           return this.p0(text, fired);
@@ -1341,7 +1351,12 @@
       if (has("R1")) {
         this.unknownStreak = 0;
         this.expecting = "headcount";
-        return this.say("r1NoSystem", "P3", fired, "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u672A\u5C0E\u5165\u4F01\u696D\u5411\u3051\u306E\u8A34\u6C42\uFF0B\u4EBA\u6570\u78BA\u8A8D\u3078");
+        return this.say(
+          "r1NoSystem",
+          this.toPhase("P3"),
+          fired,
+          "R1: \u65AD\u308A\u5224\u5B9A\u3092\u7981\u6B62\u3057\u3001\u672A\u5C0E\u5165\u4F01\u696D\u5411\u3051\u306E\u8A34\u6C42\uFF0B\u4EBA\u6570\u78BA\u8A8D\u3078"
+        );
       }
       if (has("R3")) {
         this.unknownStreak = 0;
@@ -1352,9 +1367,10 @@
         this.expecting = "contact";
         return this.say("r4Document", this.state.phase, fired, "R4: \u9001\u4ED8\u3092\u53D7\u3051\u305F\u3046\u3048\u3067\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u78BA\u5B9A");
       }
-      if (has("R2")) {
+      if (has("R2") && !this.busyPitchDone) {
         this.unknownStreak = 0;
         this.expecting = "headcount";
+        this.busyPitchDone = true;
         return this.say("r2Busy", this.state.phase, fired, "R2: 30\u79D2\u3067\u8981\u70B9\u3092\u4F1D\u3048\u3066\u4EBA\u6570\u78BA\u8A8D\u3078");
       }
       return null;
@@ -1597,6 +1613,49 @@
           return { facts: { callback_window: text }, ok: /(午前|午後|朝|昼|夕方|夜|時|いつでも)/.test(text) };
       }
     }
+    // ---------- R2（多忙）の継続 ----------
+    /**
+     * R2 の切り返しを流したあとに、また「忙しい」と言われたときの処理。
+     *
+     * 同じ切り返しをもう一度返すと、画面にも音声にも同じセリフが並んで会話が止まる。
+     * そのため必ず質問側（従業員数の確認 → 概要確認）へ進め、
+     * どちらも済んでいれば通常のフェーズ処理に渡して立て直させる。
+     */
+    afterBusy(fired) {
+      if (!this.state.hearing.H5 && !this.said.has("r1NoSystem")) {
+        this.expecting = "headcount";
+        return this.say(
+          "r1NoSystem",
+          this.toPhase("P3"),
+          fired,
+          "R2 \u306F\u518D\u751F\u6E08\u307F \u2192 \u5F93\u696D\u54E1\u6570\u306E\u78BA\u8A8D\u3078\uFF08\u540C\u3058\u5207\u308A\u8FD4\u3057\u306E\u9023\u7D9A\u518D\u751F\u3092\u6291\u6B62\uFF09"
+        );
+      }
+      if (!this.said.has("overview")) {
+        return this.say(
+          "overview",
+          this.toPhase("P1"),
+          fired,
+          "R2 \u306F\u518D\u751F\u6E08\u307F \u2192 \u6982\u8981\u78BA\u8A8D\u3078\uFF08\u540C\u3058\u5207\u308A\u8FD4\u3057\u306E\u9023\u7D9A\u518D\u751F\u3092\u6291\u6B62\uFF09"
+        );
+      }
+      return null;
+    }
+    /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
+    justSaid(text) {
+      for (let i = this.state.turns.length - 1; i >= 0; i--) {
+        const turn = this.state.turns[i];
+        if (turn?.speaker !== "agent") continue;
+        return turn.text === text;
+      }
+      return false;
+    }
+    /** 遷移が許可されていないフェーズは提案しない（不要な却下フラグを出さないため）。 */
+    toPhase(desired) {
+      const current = this.state.phase;
+      if (desired === current) return current;
+      return PHASES[current].allowedNext.includes(desired) ? desired : current;
+    }
     // ---------- 想定外の発話への立て直し ----------
     /**
      * どの分岐にも当たらなかったときの処理。
@@ -1608,15 +1667,15 @@
     repair(fired, reason) {
       this.unknownStreak++;
       const anchor = PHASE_ANCHOR[this.state.phase];
-      if (this.unknownStreak === 1 && anchor) {
+      if (this.unknownStreak === 1 && anchor && !this.justSaid(VOICE_LINES[anchor].text)) {
         return this.say(anchor, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u8A00\u3044\u76F4\u3059`, { replay: true });
       }
-      if (this.unknownStreak === 2 && !this.said.has("r1NoSystem")) {
+      if (!this.said.has("r1NoSystem")) {
         this.expecting = "headcount";
         return this.say("r1NoSystem", this.state.phase, fired, `${reason} \u2192 \u6700\u5C0F\u306E\u8CEA\u554F\uFF08\u4EBA\u6570\uFF09\u306B\u5207\u308A\u66FF\u3048`);
       }
-      if (this.unknownStreak === 3 && !this.said.has("schedule")) {
-        return this.say("schedule", "P7", fired, `${reason} \u2192 \u5185\u5BB9\u3092\u96E2\u308C\u3066\u65E5\u7A0B\u6253\u8A3A\u306B\u5207\u308A\u66FF\u3048`);
+      if (!this.said.has("schedule")) {
+        return this.say("schedule", this.toPhase("P7"), fired, `${reason} \u2192 \u5185\u5BB9\u3092\u96E2\u308C\u3066\u65E5\u7A0B\u6253\u8A3A\u306B\u5207\u308A\u66FF\u3048`);
       }
       return this.say("reject", "P0X", fired, `${reason} \u2192 \u7ACB\u3066\u76F4\u305B\u305A\u4E01\u5BE7\u306B\u7D42\u8A71`);
     }

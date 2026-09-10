@@ -12,6 +12,7 @@
  * 応答には対応する録音（public/audio/*.mp3）のパスを紐付けて返す。
  * 画面側はこれがあれば TTS ではなく録音を優先再生する（詳細は AUDIO_BASE 付近のコメント）。
  */
+import { PHASES } from "../domain/phases.js";
 import { GUARDRAILS, detectGuardrails } from "../domain/guardrails.js";
 import { HEARING_SLOT_MAP } from "../domain/hearing.js";
 import {
@@ -314,6 +315,12 @@ export class DialogEngine {
   private expecting: Expecting = null;
   /** 想定外の発話が続いた回数。立て直しの段階を決める。 */
   private unknownStreak = 0;
+  /**
+   * R2（多忙）の切り返しを再生済みか。
+   * R2 は「30秒だけ要点をお伝えして…」という一度きりの切り返しなので、
+   * 同じ通話で二度流すと会話が前に進まずループする。1通話1回に制限する。
+   */
+  private busyPitchDone = false;
 
   constructor(private state: CallState) {}
 
@@ -337,6 +344,12 @@ export class DialogEngine {
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
+
+    // R2 再生後にまた「忙しい」と言われた場合は、同じ切り返しを返さず質問側へ進める
+    if (fired.includes("R2") && this.busyPitchDone) {
+      const cont = this.afterBusy(fired);
+      if (cont) return cont;
+    }
 
     switch (this.state.phase) {
       case "P0":
@@ -438,7 +451,12 @@ export class DialogEngine {
     if (has("R1")) {
       this.unknownStreak = 0;
       this.expecting = "headcount";
-      return this.say("r1NoSystem", "P3", fired, "R1: 断り判定を禁止し、未導入企業向けの訴求＋人数確認へ");
+      return this.say(
+        "r1NoSystem",
+        this.toPhase("P3"),
+        fired,
+        "R1: 断り判定を禁止し、未導入企業向けの訴求＋人数確認へ",
+      );
     }
     // R3: 専門家を否定せず、セカンドオピニオンの位置に回る
     if (has("R3")) {
@@ -451,10 +469,12 @@ export class DialogEngine {
       this.expecting = "contact";
       return this.say("r4Document", this.state.phase, fired, "R4: 送付を受けたうえで送付先メールアドレスを確定");
     }
-    // R2: 忙しい相手には要点だけを短く伝え、人数確認まで一気に運ぶ
-    if (has("R2")) {
+    // R2: 忙しい相手には要点だけを短く伝え、人数確認まで一気に運ぶ。
+    // ただし再生は1通話1回だけ（2回目以降は afterBusy で質問側へ進める）
+    if (has("R2") && !this.busyPitchDone) {
       this.unknownStreak = 0;
       this.expecting = "headcount";
+      this.busyPitchDone = true;
       // 新台本の R2 は仮押さえではなく「30秒で要点＋人数確認」なのでフェーズは動かさない
       return this.say("r2Busy", this.state.phase, fired, "R2: 30秒で要点を伝えて人数確認へ");
     }
@@ -732,6 +752,53 @@ export class DialogEngine {
     }
   }
 
+  // ---------- R2（多忙）の継続 ----------
+
+  /**
+   * R2 の切り返しを流したあとに、また「忙しい」と言われたときの処理。
+   *
+   * 同じ切り返しをもう一度返すと、画面にも音声にも同じセリフが並んで会話が止まる。
+   * そのため必ず質問側（従業員数の確認 → 概要確認）へ進め、
+   * どちらも済んでいれば通常のフェーズ処理に渡して立て直させる。
+   */
+  private afterBusy(fired: GuardrailId[]): DialogReply | null {
+    if (!this.state.hearing.H5 && !this.said.has("r1NoSystem")) {
+      this.expecting = "headcount";
+      return this.say(
+        "r1NoSystem",
+        this.toPhase("P3"),
+        fired,
+        "R2 は再生済み → 従業員数の確認へ（同じ切り返しの連続再生を抑止）",
+      );
+    }
+    if (!this.said.has("overview")) {
+      return this.say(
+        "overview",
+        this.toPhase("P1"),
+        fired,
+        "R2 は再生済み → 概要確認へ（同じ切り返しの連続再生を抑止）",
+      );
+    }
+    return null;
+  }
+
+  /** 直前の AI 発話が同じ内容だったか（同じセリフを続けて流さないための判定）。 */
+  private justSaid(text: string): boolean {
+    for (let i = this.state.turns.length - 1; i >= 0; i--) {
+      const turn = this.state.turns[i];
+      if (turn?.speaker !== "agent") continue;
+      return turn.text === text;
+    }
+    return false;
+  }
+
+  /** 遷移が許可されていないフェーズは提案しない（不要な却下フラグを出さないため）。 */
+  private toPhase(desired: PhaseId): PhaseId {
+    const current = this.state.phase;
+    if (desired === current) return current;
+    return PHASES[current].allowedNext.includes(desired) ? desired : current;
+  }
+
   // ---------- 想定外の発話への立て直し ----------
 
   /**
@@ -745,18 +812,18 @@ export class DialogEngine {
     this.unknownStreak++;
     const anchor = PHASE_ANCHOR[this.state.phase];
 
-    // 1回目: 直前の質問をもう一度（電話では自然な立て直し）
-    if (this.unknownStreak === 1 && anchor) {
+    // 1回目: 直前の質問をもう一度（電話では自然な立て直し）。
+    // ただし、その質問をたった今言ったばかりなら言い直さない（同じセリフの連続再生になるため）。
+    if (this.unknownStreak === 1 && anchor && !this.justSaid(VOICE_LINES[anchor].text)) {
       return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, { replay: true });
     }
-    // 2回目: 答えやすい最小の質問（従業員数だけ）に切り替える
-    if (this.unknownStreak === 2 && !this.said.has("r1NoSystem")) {
+    // 以降は、まだ使っていない録音を順に使って会話を前に進める
+    if (!this.said.has("r1NoSystem")) {
       this.expecting = "headcount";
       return this.say("r1NoSystem", this.state.phase, fired, `${reason} → 最小の質問（人数）に切り替え`);
     }
-    // 3回目: 内容の説明をやめて日程の話に振る
-    if (this.unknownStreak === 3 && !this.said.has("schedule")) {
-      return this.say("schedule", "P7", fired, `${reason} → 内容を離れて日程打診に切り替え`);
+    if (!this.said.has("schedule")) {
+      return this.say("schedule", this.toPhase("P7"), fired, `${reason} → 内容を離れて日程打診に切り替え`);
     }
     // それでも噛み合わなければ、痕跡を残して丁寧に終話する
     return this.say("reject", "P0X", fired, `${reason} → 立て直せず丁寧に終話`);

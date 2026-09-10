@@ -297,3 +297,66 @@ test("自由発話の応答も禁止ワードフィルタを必ず通る", () =>
   }
   assert.equal(state.blockedViolationCount, 0);
 });
+
+// ---------- R2（多忙）の連続発火防止 ----------
+
+test("R2 の切り返しは1通話で一度しか再生されない", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  const replies = ["ちょっと今忙しいんだよね", "いや、だから今バタバタしてて", "うーん、時間ないんだよ"].map(
+    (t) => dialog.respond(t),
+  );
+
+  const busyCount = replies.filter((r) => r.utterance === VOICE_LINES.r2Busy.text).length;
+  assert.equal(busyCount, 1, `R2 のセリフが ${busyCount} 回再生されている`);
+});
+
+test("R2 の次のターンは従業員数の確認、その次は概要確認へ進む", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+
+  const busy = dialog.respond("ちょっと今忙しいんだよね");
+  assert.equal(busy.utterance, VOICE_LINES.r2Busy.text);
+  assert.equal(busy.audioFile, `${AUDIO_BASE}r2_busy.mp3`);
+
+  // 2ターン目: 同じ切り返しではなく従業員数の確認（P3相当）
+  const headcount = dialog.respond("だから今バタバタしてるんだって");
+  assert.equal(headcount.utterance, VOICE_LINES.r1NoSystem.text);
+  assert.match(headcount.utterance, /従業員数/);
+  assert.match(headcount.matched, /連続再生を抑止/);
+
+  // 3ターン目: 概要確認（P1相当）
+  const overview = dialog.respond("いや、時間がないんだよ");
+  assert.equal(overview.utterance, VOICE_LINES.overview.text);
+  assert.equal(overview.phase, "P1");
+});
+
+test("多忙が続いても同じセリフが2回連続せず、必ず録音で会話が進む", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  const inputs = [
+    "ちょっと今忙しいんだよね",
+    "いや、だから今バタバタしてて",
+    "うーん、時間ないんだよ",
+    "だから時間がないって",
+    "今は無理だよ、立て込んでる",
+    "忙しいんだって",
+  ];
+
+  let previous = "";
+  for (const input of inputs) {
+    const r = dialog.respond(input);
+    assert.notEqual(r.utterance, previous, `同じセリフが連続している: ${r.utterance.slice(0, 24)}`);
+    assert.ok(r.audioFile, `録音ではなく音声合成に落ちている: ${r.matched}`);
+    previous = r.utterance;
+  }
+});
+
+test("R2 の直後に人数を答えられたら、そのまま回収して通常進行に戻る", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P1";
+  dialog.respond("すみません、今ちょっと立て込んでまして");
+  const answered = dialog.respond("うちは20人くらいですね");
+  assert.equal(state.hearing.H5, "20名");
+  assert.notEqual(answered.utterance, VOICE_LINES.r2Busy.text);
+});
