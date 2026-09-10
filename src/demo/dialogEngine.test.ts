@@ -150,19 +150,21 @@ test("ガードレールの切り返しにはすべて対応する録音が紐�
 // ---------- 想定外発話のフォールバック ----------
 
 test("想定外の発話でも読み上げに落とさず、録音で会話を立て直す", () => {
-  const { state, dialog } = fresh();
-  state.phase = "P3"; // 年齢層・人数を聞いた直後
+  const { dialog } = fresh();
   dialog.greeting();
+  dialog.respond("少々お待ちください、代わります"); // → 概要(P1)
+  const asked = dialog.respond("はい、代表の中村です"); // → 年齢層・人数(P3)
+  assert.equal(asked.utterance, VOICE_LINES.hearingAgeCount.text);
 
-  // 1回目: 同じ質問を録音で言い直す
+  // 1回目: 直前に聞いた内容をそのまま短く聞き直す（長い台本は繰り返さない）
   const first = dialog.respond("えーっと、それで何の話でしたっけ");
-  assert.equal(first.utterance, VOICE_LINES.hearingAgeCount.text);
-  assert.equal(first.audioFile, `${AUDIO_BASE}p2_p3_hearing.mp3`);
-  assert.match(first.matched, /言い直す/);
+  assert.match(first.utterance, /何名様/);
+  assert.match(first.matched, /聞き直す/);
 
   // 2回目: 答えやすい最小の質問（人数だけ）に切り替える
   const second = dialog.respond("いやー、どうもよく分からないですね");
   assert.equal(second.utterance, VOICE_LINES.r1NoSystem.text);
+  assert.equal(second.audioFile, `${AUDIO_BASE}r1_no_system.mp3`);
   assert.match(second.matched, /最小の質問/);
 
   // 3回目: 内容を離れて日程の話に振る
@@ -349,7 +351,7 @@ test("多忙が続いても同じセリフが2回連続せず、2ターンで終
 
 test("謝罪から入る台本が続けて再生されない（多忙・日程NG・想定外の流れ）", () => {
   const opensWithApology = (t: string): boolean =>
-    /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません|恐れ入り)/.test(t);
+    /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません)/.test(t);
 
   const scenarios: { phase: "P0" | "P3" | "P7"; inputs: string[] }[] = [
     { phase: "P0", inputs: ["ちょっと今忙しいんだよね", "いや、だから今バタバタしてて"] },
@@ -391,4 +393,170 @@ test("R2 の直後に人数を答えられたら、そのまま回収して通�
   const answered = dialog.respond("うちは20人くらいですね");
   assert.equal(state.hearing.H5, "20名");
   assert.notEqual(answered.utterance, VOICE_LINES.r2Busy.text);
+});
+
+// ---------- R7（不在）の判定と切り返し ----------
+
+test("主語のない不在の言い回しを R7 として検知する", () => {
+  const absent = [
+    "今不在にしてます",
+    "不在です",
+    "ただいま席を外しております",
+    "出かけております",
+    "出張しております",
+    "本日は休みを取っております",
+    "夕方には戻ります",
+    "外出中です",
+    "あいにく外出しております",
+    "今おりません",
+    "留守にしております",
+  ];
+  for (const text of absent) {
+    assert.ok(
+      detectGuardrails(text).includes("R7"),
+      `「${text}」が R7 として検知されない（検知: ${detectGuardrails(text).join(",") || "なし"}）`,
+    );
+  }
+});
+
+test("不在の言い回しを制度未導入(R1)と取り違えない", () => {
+  // 「設けておりません」は不在ではなく制度未導入
+  assert.ok(detectGuardrails("退職金は特に設けておりませんね").includes("R1"));
+  assert.ok(!detectGuardrails("退職金は特に設けておりませんね").includes("R7"));
+});
+
+test("不在と言われたら人数確認ではなく不在用の切り返しへ進む", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  const r = dialog.respond("今不在にしてます");
+  assert.equal(r.utterance, VOICE_LINES.r7Absent.text);
+  assert.equal(r.audioFile, `${AUDIO_BASE}r7_absent.mp3`);
+  assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text);
+  assert.doesNotMatch(r.matched, /判定できず/);
+});
+
+test("不在は戻り時間と折り返し先を確定して終話する", () => {
+  const { state, dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("担当は今不在にしてます");
+  const askContact = dialog.respond("夕方には戻ります");
+  assert.equal(state.callbackWindow, "夕方");
+  assert.match(askContact.utterance, /(お電話番号|メールアドレス|お戻り)/);
+
+  const closing = dialog.respond("090-1234-5678 です");
+  assert.equal(state.callbackPhone, "090-1234-5678");
+  assert.match(closing.utterance, /夕方頃に改めてお電話いたします/);
+  assert.equal(state.ended, true);
+});
+
+test("不在の切り返しも同じ録音を繰り返さない", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  const first = dialog.respond("今不在にしてます");
+  const second = dialog.respond("まだ戻っておりません");
+  assert.equal(first.utterance, VOICE_LINES.r7Absent.text);
+  assert.notEqual(second.utterance, VOICE_LINES.r7Absent.text);
+});
+
+// ---------- 断り・導入済みの判定 ----------
+
+test("断り・導入済みの発話ではヒアリングを進めず切り返す", () => {
+  const declines = [
+    "うちはもう対策してるので",
+    "やっていました",
+    "大丈夫の意味わかってる？",
+    "間に合ってます",
+    "もう導入済みです",
+    "十分足りてます",
+    "結構です",
+    "必要ありません",
+  ];
+  for (const text of declines) {
+    const { dialog } = fresh();
+    dialog.greeting();
+    const r = dialog.respond(text);
+    assert.equal(
+      r.utterance,
+      VOICE_LINES.r5OtherScheme.text,
+      `「${text}」で断りとして扱われていない: ${r.matched}`,
+    );
+    // ヒアリングを一方的に進めていないこと
+    assert.notEqual(r.utterance, VOICE_LINES.hearingAgeCount.text);
+    assert.notEqual(r.utterance, VOICE_LINES.hearingFiscalEmail.text);
+    assert.notEqual(r.utterance, VOICE_LINES.schedule.text);
+  }
+});
+
+test("2回連続で断られたら丁寧に終話する", () => {
+  const { state, dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("うちはもう対策してるので");
+  const closed = dialog.respond("いや、間に合ってます");
+  assert.equal(closed.utterance, VOICE_LINES.reject.text);
+  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.equal(state.ended, true);
+});
+
+test("「大丈夫」は日程の可否を答えている場面だけ肯定として扱う", () => {
+  // 日程の場面: 肯定（アポ確定へ）
+  const { state: ok, dialog: okDialog } = fresh();
+  ok.phase = "P7";
+  const accepted = okDialog.respond("はい、その時間なら大丈夫です");
+  assert.equal(accepted.phase, "P8");
+  assert.equal(ok.appointmentDate, "9月17日（水）");
+
+  // 説明中の「大丈夫」: 断り
+  const { dialog: ngDialog } = fresh();
+  ngDialog.greeting();
+  const declined = ngDialog.respond("いや、うちは大丈夫です");
+  assert.equal(declined.utterance, VOICE_LINES.r5OtherScheme.text);
+});
+
+test("ヒアリング中(P8)の回答は断りとして扱わない", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  dialog.respond("はい、その時間なら大丈夫です"); // → P8
+  const r = dialog.respond("090-1234-5678 です。今は特にやってません");
+  assert.notEqual(r.utterance, VOICE_LINES.reject.text);
+  assert.equal(state.callbackPhone, "090-1234-5678");
+});
+
+// ---------- 切り返し直後の回答の拾い上げ ----------
+
+test("R2 の切り返しで聞いた従業員数は「20名です」だけでも拾って次へ進む", () => {
+  const { state, dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("ちょっと今忙しいんだよね");
+
+  const next = dialog.respond("20名です");
+  assert.equal(state.hearing.H5, "20名");
+  assert.equal(next.utterance, VOICE_LINES.hearingFiscalEmail.text);
+  assert.equal(next.audioFile, `${AUDIO_BASE}p4_p5_hearin.mp3`);
+  assert.doesNotMatch(next.matched, /判定できず/);
+
+  // そのまま日程打診まで進める
+  const schedule = dialog.respond("決算は3月で、メールは info@example.co.jp です");
+  assert.equal(schedule.utterance, VOICE_LINES.schedule.text);
+});
+
+test("R1 の切り返しで聞いた従業員数も同じように拾える", () => {
+  const { state, dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("うちは退職金制度、何もやってないんですよ");
+  const next = dialog.respond("10人くらいですね");
+  assert.equal(state.hearing.H5, "10名");
+  assert.equal(next.utterance, VOICE_LINES.hearingFiscalEmail.text);
+});
+
+test("言い直しは冒頭の挨拶ではなく、直前に流した質問を基準にする", () => {
+  const { dialog } = fresh();
+  const greeting = dialog.greeting();
+  const busy = dialog.respond("ちょっと今忙しいんだよね");
+  assert.equal(busy.utterance, VOICE_LINES.r2Busy.text);
+
+  const again = dialog.respond("えーっと、なんだっけ");
+  assert.notEqual(again.utterance, greeting.utterance, "冒頭の挨拶に巻き戻っている");
+  assert.notEqual(again.audioFile, `${AUDIO_BASE}p0_greeting.mp3`);
+  assert.match(again.utterance, /従業員数/);
+  assert.match(again.matched, /聞き直す/);
 });

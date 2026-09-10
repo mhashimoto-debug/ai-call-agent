@@ -129,6 +129,30 @@ export const VOICE_LINES = {
 
 export type VoiceLineId = keyof typeof VOICE_LINES;
 
+/** 言い直しの対象にしない台本（言い切って終わるもの）。 */
+const CLOSING_LINES = new Set<VoiceLineId>(["reject", "closing"]);
+
+/**
+ * 短い聞き返し。
+ * 直前に流したばかりの台本をもう一度そのまま流すと、長い説明が2回続いて不自然になる。
+ * その場合はここから、同じことを一言で聞き直す（録音は無いので音声合成）。
+ */
+const RECAP: Partial<Record<VoiceLineId, string>> = {
+  greeting: "恐れ入ります、2026年12月の法改正の件で、ご担当者様にお繋ぎいただけますでしょうか？",
+  overview: "恐れ入ります、御社では役員様の退職金のご準備は何かされていますでしょうか？",
+  hearingAgeCount: "恐れ入ります、役員様と従業員様を合わせて、おおよそ何名様でいらっしゃいますか？",
+  hearingFiscalEmail: "恐れ入ります、御社の決算月はいつになりますでしょうか？",
+  schedule: "恐れ入ります、来週の水曜日14時頃でしたら、ご都合いかがでしょうか？",
+  reschedule: "恐れ入ります、木曜日の15時頃でしたら、ご都合いかがでしょうか？",
+  contact: "恐れ入ります、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？",
+  r1NoSystem: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
+  r2Busy: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
+  r3Expert: "恐れ入ります、セカンドオピニオンとして情報のご確認だけでもいかがでしょうか？",
+  r4Document: "恐れ入ります、送付先のメールアドレスを伺えますでしょうか？",
+  r5OtherScheme: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
+  r7Absent: "恐れ入ります、何時頃でしたらお戻りになりますでしょうか？",
+};
+
 /**
  * フェーズごとの「その場面の主質問」。
  * 想定外の発話で立て直すとき、どの録音に戻ればよいかをここで決める。
@@ -186,6 +210,28 @@ const SCHEDULE_NG =
 /** 日程に同意した。 */
 const SCHEDULE_OK =
   /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解)/;
+/**
+ * R7 のうち「本人が今いない」ケース。決裁権なしとは切り返しが変わるので分ける。
+ * R7 が発火した発話にだけ当てるので、広めに取ってよい。
+ */
+const ABSENT_NOW =
+  /(不在|席を外|外出|出かけ|出払|留守|帰社|帰宅|退社|出張|戻り|戻って|お休み|休み|おりませ|今[はも]?い(ませ|ない))/;
+
+/** 戻り時間・折り返しやすい時間帯の申し出。 */
+const RETURN_TIME =
+  /(午前|午後|朝|昼|夕方|夜|明日|明後日|来週|週明け|\d{1,2}\s*時|\d{1,2}\s*日|後ほど|のちほど|いつでも|月曜|火曜|水曜|木曜|金曜)/;
+
+/**
+ * 断り・導入済みの意思表示。
+ * 「もう対策してる」「間に合ってます」は質問への回答ではなく断りなので、
+ * ヒアリングの進行より先に判定する（進めると会話が噛み合わなくなる）。
+ */
+const DECLINE =
+  /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|入って(ます|おり)ます|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
+
+/** 「大丈夫」を肯定と読んでよい文脈（日程の可否を答えている場面）。 */
+const SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
+
 /** 時間帯の指定。2択に答えたとみなす。 */
 const TIME_SLOT =
   /(午前|午後|朝|昼|夕方|夜|前半|後半|早い時間|遅い時間|\d{1,2}\s*時|\d{1,2}\s*日|来週|再来週|明日|明後日|週明け|月曜|火曜|水曜|木曜|金曜)/;
@@ -321,6 +367,14 @@ export class DialogEngine {
    * 同じ通話で二度流すと会話が前に進まずループする。1通話1回に制限する。
    */
   private busyPitchDone = false;
+  /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
+  private absentMode = false;
+  /** 不在対応で何ターン粘ったか。確認が取れないまま長引かせないための上限。 */
+  private absentTurns = 0;
+  /** 連続して断られた回数。2回続いたら食い下がらない。 */
+  private declineStreak = 0;
+  /** 直前に流した収録台本。言い直しはフェーズではなくこれを基準にする。 */
+  private lastLine: VoiceLineId | null = null;
 
   constructor(private state: CallState) {}
 
@@ -340,7 +394,7 @@ export class DialogEngine {
     // まとめ聞き対応: 質問していない項目でも、言われた時点で拾って保持する
     this.harvested = this.harvest(text);
     // 切り返しで投げた質問への回答は、フェーズに関係なくここで回収する
-    this.collectExpected(text);
+    const collected = this.collectExpected(text);
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
@@ -349,6 +403,30 @@ export class DialogEngine {
     if (fired.includes("R2") && this.busyPitchDone) {
       const cont = this.afterBusy(fired);
       if (cont) return cont;
+    }
+
+    // 不在対応中は、制度の話に戻さず戻り時間と折り返し先の確定だけを行う
+    if (this.absentMode && !this.state.ended) {
+      return this.absentFollowUp(text, fired);
+    }
+
+    // 断り・導入済みの申し出は、ヒアリングの進行より先に判定する
+    if (this.isDecline(text)) {
+      this.declineStreak++;
+      return this.handleDecline(fired);
+    }
+    this.declineStreak = 0;
+
+    // 切り返しで聞いた従業員数が取れたら、そのまま次の質問（決算月・メール）へ進む。
+    // ここで通常のフェーズ処理に渡すと、受付段階のままなので「判定できず」になってしまう。
+    if (collected === "headcount") {
+      this.unknownStreak = 0;
+      return this.say(
+        "hearingFiscalEmail",
+        this.toPhase("P5"),
+        fired,
+        "切り返しへの回答から H5 を取得 → 決算月と送付先メールアドレスへ",
+      );
     }
 
     switch (this.state.phase) {
@@ -407,19 +485,23 @@ export class DialogEngine {
    * 「従業員数だけ」「連絡先だけ」など切り返しで投げた質問への回答を回収する。
    * 文脈語が無い回答（「20人です」）でも、直前に聞いた項目としてなら受け取れる。
    */
-  private collectExpected(text: string): void {
-    if (!this.expecting) return;
+  private collectExpected(text: string): Expecting {
+    if (!this.expecting) return null;
     if (this.expecting === "headcount") {
+      // 「20名です」「10人くらい」のように数だけ返ってくるので、文脈語は要求しない
       const n = this.state.hearing.H5 ? null : toNumber(BARE_COUNT.exec(text)?.[1] ?? "");
-      if (n !== null && n > 0) {
-        applyExtracted(this.state, { H5: `${n}名` });
-        this.harvested.push("H5");
-        this.expecting = null;
-      }
-      return;
+      if (n === null || n <= 0) return null;
+      applyExtracted(this.state, { H5: `${n}名` });
+      if (!this.harvested.includes("H5")) this.harvested.push("H5");
+      this.expecting = null;
+      return "headcount";
     }
     // contact: メール・電話は harvest 側で拾えているので、入ったかどうかだけ見る
-    if (this.state.email || this.state.callbackPhone) this.expecting = null;
+    if (this.state.email || this.state.callbackPhone) {
+      this.expecting = null;
+      return "contact";
+    }
+    return null;
   }
 
   // ---------- ガードレール優先の分岐（設計書 §5） ----------
@@ -441,11 +523,27 @@ export class DialogEngine {
       }
       return this.say("r5OtherScheme", this.state.phase, fired, "R5: iDeCo・個人年金との勘違いを訂正");
     }
-    // R7: 決裁者でない／不在なら、次回接触のための連絡先の確定に切り替える
+    // R7: 不在／決裁権なしなら、ヒアリングを止めて次回接触の確定に切り替える
     if (has("R7")) {
       this.unknownStreak = 0;
-      this.expecting = "contact";
-      return this.say("r7Absent", this.state.phase, fired, "R7: ヒアリングを止めて連絡先の確保へ");
+      const absent = ABSENT_NOW.test(text);
+      if (!this.said.has("r7Absent")) {
+        this.expecting = "contact";
+        this.absentMode = absent;
+        return this.say(
+          "r7Absent",
+          this.state.phase,
+          fired,
+          absent
+            ? "R7: 不在 → 戻りの際の連絡先を確保"
+            : "R7: 決裁権なし → 判断できる方の連絡先を確保",
+        );
+      }
+      // 同じ切り返しは繰り返さない。不在なら戻り時間と折り返しの確定へ進める
+      if (absent || this.absentMode) {
+        this.absentMode = true;
+        return this.absentFollowUp(text, fired);
+      }
     }
     // R1: 「制度がない」は断りではなく最も見込みが高いホットサイン
     if (has("R1")) {
@@ -475,8 +573,9 @@ export class DialogEngine {
       this.unknownStreak = 0;
       this.expecting = "headcount";
       this.busyPitchDone = true;
-      // 新台本の R2 は仮押さえではなく「30秒で要点＋人数確認」なのでフェーズは動かさない
-      return this.say("r2Busy", this.state.phase, fired, "R2: 30秒で要点を伝えて人数確認へ");
+      // 新台本の R2 は仮押さえではなく「30秒で要点＋人数確認」なので、
+      // 受付段階のままにせず、可能ならヒアリング(P3)へ進める
+      return this.say("r2Busy", this.toPhase("P3"), fired, "R2: 30秒で要点を伝えて人数確認へ");
     }
     return null;
   }
@@ -756,6 +855,101 @@ export class DialogEngine {
     }
   }
 
+  // ---------- R7（不在）の継続 ----------
+
+  /**
+   * 不在と分かったあとの進行。
+   *
+   * 相手は取次ぎ担当で、制度の話をしても意味がない。
+   * 「戻り時間」と「折り返し先」の2つが揃った時点で折り返しを約束して終話する。
+   * どちらも取れないまま長引く場合は粘らずに終話する。
+   */
+  private absentFollowUp(text: string, fired: GuardrailId[]): DialogReply {
+    // 途中で本人に代わってもらえた場合は不在対応をやめて通常の会話に戻す
+    if (TRANSFER.test(text)) {
+      this.absentMode = false;
+      this.absentTurns = 0;
+      return this.say("overview", this.toPhase("P1"), fired, "不在から取次ぎ → 法改正の概要");
+    }
+
+    this.absentTurns++;
+    // 「夕方には戻ります」のような申し出から、折り返しやすい時間帯を拾う
+    if (!this.state.callbackWindow) {
+      const window = RETURN_TIME.exec(text)?.[0];
+      if (window) applyExtracted(this.state, { callback_window: window });
+    }
+    const hasContact = Boolean(this.state.callbackPhone || this.state.email);
+    const window = this.state.callbackWindow;
+
+    if (window && hasContact) {
+      return this.speakOnly(
+        `ありがとうございます。それでは${window}頃に改めてお電話いたします。お忙しいところ失礼いたしました。`,
+        this.toPhase("P0X"),
+        fired,
+        "不在: 戻り時間と折り返し先を確保 → 折り返しを約束して終話",
+      );
+    }
+    if (this.absentTurns >= 3) {
+      return this.say("reject", this.toPhase("P0X"), fired, "不在: 確認が取れないため粘らず終話");
+    }
+    if (!window) {
+      return this.speakOnly(
+        "恐れ入ります、何時頃でしたらお戻りになりますでしょうか。改めてこちらからお電話いたします。",
+        this.state.phase,
+        fired,
+        "不在: 戻り時間の確認",
+      );
+    }
+    this.expecting = "contact";
+    return this.speakOnly(
+      `承知いたしました。${window}頃に改めてお電話いたします。念のため、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？`,
+      this.state.phase,
+      fired,
+      "不在: 折り返し先の確認",
+    );
+  }
+
+  // ---------- 断り・導入済みへの対応 ----------
+
+  /**
+   * 「もう対策してる」「間に合ってます」等の断りかどうか。
+   *
+   * 「大丈夫」は文脈で意味が反転する（日程の可否なら肯定、それ以外は「間に合っている」）。
+   * ヒアリング中（P8 以降）は質問への回答なので断り判定しない。
+   */
+  private isDecline(text: string): boolean {
+    const phase = this.state.phase;
+    if (phase === "P8" || phase === "P9" || phase === "END" || phase === "P0X") return false;
+    if (TRANSFER.test(text)) return false;
+    if (DECLINE.test(text)) return true;
+    if (/大丈夫/.test(text)) {
+      const scheduling = phase === "P6" || phase === "P7";
+      return !scheduling && !SCHEDULE_CONTEXT.test(text);
+    }
+    return false;
+  }
+
+  /**
+   * 断られたときの切り返し。
+   * 1回目は「今やっているものとは別枠の制度」であることだけを伝え、
+   * 2回続けて断られたら食い下がらずに終話する。
+   */
+  private handleDecline(fired: GuardrailId[]): DialogReply {
+    if (this.declineStreak >= 2) {
+      return this.say("reject", this.toPhase("P0X"), fired, "2回連続の断り → 食い下がらず丁寧に終話");
+    }
+    if (!this.said.has("r5OtherScheme")) {
+      this.unknownStreak = 0;
+      return this.say(
+        "r5OtherScheme",
+        this.state.phase,
+        fired,
+        "断り（対策済み・間に合っている）→ 今やっているものとは別枠であることを伝える",
+      );
+    }
+    return this.say("reject", this.toPhase("P0X"), fired, "断りが続いたため丁寧に終話");
+  }
+
   // ---------- R2（多忙）の継続 ----------
 
   /**
@@ -784,7 +978,7 @@ export class DialogEngine {
    * 台本を選ぶ段階で連続を避ける（読み上げ側で文頭を削ると音声とテキストがずれるのでやらない）。
    */
   private static opensWithApology(text: string): boolean {
-    return /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません|恐れ入り)/.test(text);
+    return /^(あ、|ああ、)?(大変|誠に)?(失礼(いた)?しました|申し訳|すみません)/.test(text);
   }
 
   /** 直前の AI 発話が謝罪から入っていたか。 */
@@ -821,12 +1015,26 @@ export class DialogEngine {
    */
   private repair(fired: GuardrailId[], reason: string): DialogReply {
     this.unknownStreak++;
-    const anchor = PHASE_ANCHOR[this.state.phase];
+    // 言い直しの基準は「実際に最後に流した質問」。
+    // フェーズの主質問を使うと、切り返し(R2 等)でフェーズが進んでいない場面で
+    // 冒頭の挨拶まで巻き戻ってしまう。
+    const anchor =
+      this.lastLine && !CLOSING_LINES.has(this.lastLine)
+        ? this.lastLine
+        : PHASE_ANCHOR[this.state.phase];
 
-    // 1回目: 直前の質問をもう一度（電話では自然な立て直し）。
-    // ただし、その質問をたった今言ったばかりなら言い直さない（同じセリフの連続再生になるため）。
-    if (this.unknownStreak === 1 && anchor && !this.justSaid(VOICE_LINES[anchor].text)) {
-      return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, { replay: true });
+    // 1回目: 直前に流した質問をもう一度（電話では自然な立て直し）
+    if (this.unknownStreak === 1 && anchor) {
+      if (!this.justSaid(VOICE_LINES[anchor].text)) {
+        return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, {
+          replay: true,
+        });
+      }
+      // たった今流したばかりの台本は繰り返さず、同じ内容を一言で聞き直す
+      const recap = RECAP[anchor];
+      if (recap) {
+        return this.speakOnly(recap, this.state.phase, fired, `${reason} → 直前の質問を短く聞き直す`);
+      }
     }
     // 以降は、まだ使っていない録音を順に使って会話を前に進める。
     // ただし直前が謝罪から入る台本だったときは、謝罪が二重になるので人数確認は飛ばす。
@@ -854,6 +1062,7 @@ export class DialogEngine {
     const line = VOICE_LINES[id];
     const alreadySaid = this.said.has(id);
     this.said.add(id);
+    this.lastLine = id;
     // 同じ録音は続けて流さない。ただし言い直しは同じ文言なので再生してよい。
     const audioFile = !alreadySaid || opts.replay ? audioUrl(line.file) : undefined;
     return this.emit(line.text, proposed, fired, matched, audioFile);
