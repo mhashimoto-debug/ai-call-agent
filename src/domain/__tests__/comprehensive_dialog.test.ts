@@ -489,7 +489,8 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
     "3月です", "info@example.co.jp です", "メールは苦手で",
     "はい大丈夫です", "水曜は厳しい", "調整してみます", "オンラインって何？",
     "090-1234-5678 です", "ふーん", "えーっと", "……", "うーん", "よく分からん",
-    "ホームページに載ってます", "HPを見てください", "サイトに出てます",
+    "ホームページに載ってます", "HPを見てください", "サイトに出てます", "サイト通りです",
+    "担当者のお名前はお分かりでしょうか", "誰に繋げばいいですか", "どこの部署ですか",
   ];
 
   // 再現できるよう擬似乱数は固定シードで回す
@@ -605,4 +606,76 @@ test("HP参照: 資料請求のあとにHPと言われたら送付先を聞き�
 
   const hp = call.say("あ、ホームページに載ってるのでいいです");
   assert.doesNotMatch(hp.utterance, /メールアドレス/, `送付先を聞き直している: ${hp.matched}`);
+});
+
+// ============================================================
+// 12. 受付ガード（担当者名の確認・取次ぎ先不明）
+// ============================================================
+
+const CONTACT_GUARD_CASES: string[] = [
+  "担当者のお名前はお分かりでしょうか",
+  "お名前はお分かりですか",
+  "担当者様のお名前を教えていただけますか",
+  "誰宛てになりますか",
+  "どなたにお繋ぎすればよいですか",
+  "担当が誰かわからないんですが",
+  "担当者が分かりません",
+  "どこの部署でしょうか",
+  "担当部署はどちらですか",
+  "誰に繋げばいいですか",
+];
+
+for (const text of CONTACT_GUARD_CASES) {
+  test(`受付ガード: 「${text}」で概要説明・ヒアリング・挨拶に流れない`, () => {
+    const call = new Call();
+    const r = call.say(text);
+
+    // 用件確認と取り違えて概要を流さない
+    assert.notEqual(r.utterance, VOICE_LINES.overview.text, `概要説明に流れている: ${r.matched}`);
+    // 相手の質問を無視してヒアリングへ進まない
+    assert.notEqual(r.utterance, VOICE_LINES.hearingAgeCount.text, `人数確認へ進んでいる: ${r.matched}`);
+    assert.notEqual(r.utterance, VOICE_LINES.hearingFiscalEmail.text);
+    // 冒頭の挨拶をオウム返ししない
+    assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `挨拶を繰り返している: ${r.matched}`);
+
+    // 部署と役職で取次ぎ先を示す
+    assert.match(r.utterance, /個人名ではなく/);
+    assert.match(r.utterance, /(人事|総務)/);
+    assert.match(r.utterance, /代表者様/);
+    assert.match(r.utterance, /お繋ぎいただけ/);
+    assert.equal(call.state.ended, false);
+  });
+}
+
+test("受付ガード: ヒアリング中に名前を聞かれても人数確認に戻さない", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です"); // → 年齢層・人数の質問
+  const r = call.say("担当者のお名前はお分かりでしょうか");
+  assert.match(r.utterance, /個人名ではなく/);
+  assert.notEqual(r.utterance, VOICE_LINES.hearingAgeCount.text);
+});
+
+test("受付ガード: 取次ぎ先が決まらなければ粘らず終話する", () => {
+  const call = new Call();
+  call.say("担当者のお名前はお分かりでしょうか");
+  const closed = call.say("いや、誰に繋げばいいか分からないですね");
+  assert.equal(closed.utterance, VOICE_LINES.reject.text);
+  assert.equal(call.state.ended, true);
+});
+
+test("受付ガード: 通常の用件確認は従来どおり概要を説明する", () => {
+  const call = new Call();
+  const r = call.say("どういったご用件でしょうか");
+  assert.equal(r.utterance, VOICE_LINES.overview.text);
+});
+
+test("HP参照: 「サイト通りです」も回避として扱い、初期の切り返しへ巻き戻さない", () => {
+  const call = new Call();
+  call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です");
+  const r = call.say("サイト通りです");
+  assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text, "初期の切り返しへ巻き戻っている");
+  assert.notEqual(r.utterance, VOICE_LINES.greeting.text);
+  assert.match(r.utterance, /サイトより確認/);
 });

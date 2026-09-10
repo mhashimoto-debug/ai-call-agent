@@ -221,3 +221,33 @@ test("タイプB 本人応答: 「私では分かりません」は引き継ぎ�
   assert.ok(!detectHandover("私では分かりません"), "決裁権なしを接続成功と誤判定している");
   assert.ok(!detectHandover("担当ではありません"), "担当外を接続成功と誤判定している");
 });
+
+// ---------- 担当者名の確認 ----------
+
+const NAME_ASK_CASES = [
+  "担当者のお名前はお分かりでしょうか",
+  "お名前はお分かりですか",
+  "担当者様のお名前を教えていただけますか",
+  "誰宛てになりますか",
+];
+
+for (const text of NAME_ASK_CASES) {
+  test(`タイプB 担当者名: 「${text}」に概要説明を流さず部署・役職で返す`, () => {
+    const { engine, first } = fresh();
+    const r = engine.respond(text);
+
+    assert.notEqual(r.utterance, VOICE_LINES.overview.text, `概要説明に流れている: ${r.matched}`);
+    assert.notEqual(r.utterance, first.utterance, "冒頭の挨拶を繰り返している");
+    assert.match(r.utterance, /特定のお名前ではなく/);
+    assert.match(r.utterance, /(人事|総務)/);
+    assert.match(r.utterance, /代表者様/);
+    assert.equal(engine.finished, false);
+  });
+}
+
+test("タイプB 担当者名: 提示のあとに本人が出たら引き継ぐ", () => {
+  const { engine } = fresh();
+  engine.respond("担当者のお名前はお分かりでしょうか");
+  const r = engine.respond("あ、私が担当ですが");
+  assert.equal(r.handover, true);
+});

@@ -13,6 +13,8 @@
 import {
   ABSENT_NOW,
   ASK_PURPOSE,
+  CONTACT_NAME_ASKED,
+  CONTACT_UNKNOWN,
   REFUSE_SALES,
   RETURN_TIME,
   VOICE_LINES,
@@ -83,13 +85,13 @@ export const HANDOVER_PATTERNS: RegExp[] = [
 ];
 
 /**
- * 「誰に繋げばいいか分からない」という応答。
+ * 「担当者の名前は？」「誰に繋げばいいか分からない」という応答。
  *
- * ここで取次ぎ依頼をそのまま繰り返しても相手は動けない。
+ * ここで取次ぎ依頼や用件説明をそのまま繰り返しても相手は動けない。
  * 具体的な部署・役職を挙げて、取次ぎ先を決められる形にして返す必要がある。
+ * 判定は タイプA と同じものを使う（受付の反応はモードによらないため）。
  */
-export const UNKNOWN_CONTACT =
-  /(担当(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|いない|決まって))|(誰|どなた)(に|へ|宛)?\s*(繋|つな|回|お伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+export const UNKNOWN_CONTACT = CONTACT_UNKNOWN;
 
 /**
  * 用件を重ねて確認された、と読む言い回し。
@@ -172,11 +174,18 @@ export class TransferEngine {
     if (UNKNOWN_CONTACT.test(text)) {
       if (!this.departmentSuggested) {
         this.departmentSuggested = true;
-        return this.speak(
-          "失礼いたしました！総務や人事のご担当者様、あるいは代表者様（社長様）にお繋ぎいただけますでしょうか？",
-          "担当不明 → 総務・人事・代表者を挙げて取次ぎを再依頼",
-          fired,
-        );
+        // 名前を尋ねられている場合は「名前では答えられない」ことを先に伝える
+        return CONTACT_NAME_ASKED.test(text)
+          ? this.speak(
+              "失礼いたしました！特定のお名前ではなく、人事・総務のご担当者様か代表者様にお繋ぎいただけますでしょうか？",
+              "担当者名の確認 → 部署・役職を指定して取次ぎを再依頼",
+              fired,
+            )
+          : this.speak(
+              "失礼いたしました！総務や人事のご担当者様、あるいは代表者様（社長様）にお繋ぎいただけますでしょうか？",
+              "担当不明 → 総務・人事・代表者を挙げて取次ぎを再依頼",
+              fired,
+            );
       }
       this.outcome = "rejected";
       return this.say("reject", "取次ぎ先が決まらず → 粘らず終話", fired);

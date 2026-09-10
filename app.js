@@ -1007,7 +1007,9 @@
   var DECLINE = /(対策(は|も)?(して|済|でき|ばっちり)|やってます|やっており|やっている|やってる|やってました|やっていました|導入(済|して(ます|おり|いる|いました))|(?:保険|制度|共済|年金|中退共|DC)[^。]{0,6}入って(ます|おり|いる)|間に合って|足りて(ます|いる|おり)|十分|充分|結構です(?!よ)|けっこうです|要りません|いりません|いらない|要らない|いらん|不要|必要(は)?(ない|ありませ)|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|お断り|遠慮(し|させ)|うちは(いい|平気)|もう(いい|やって|済ん))/;
   var SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
   var HP_REFERENCE = /(ホームページ|ＨＰ|HP|ウェブ|Web|ウェブサイト|サイト|ネット|インターネット|オンライン上|URL|ＵＲＬ|弊社サイト)[^。]{0,16}(見|ご覧|載って|掲載|出て|ござい|あります|ありま|確認|調べ|検索|参照)/i;
-  var POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)/;
+  var POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)|(ホームページ|ＨＰ|HP|サイト|ウェブ|ネット)[^。]{0,6}(通り|とおり|の通り)/i;
+  var CONTACT_UNKNOWN = /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(担当|窓口|部署)(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|決まって|いらっしゃら)|(誰|どなた)(に|へ|宛て?)?\s*(お)?(繋|つな|回|伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+  var CONTACT_NAME_ASKED = /(担当|責任者|窓口|部署)[^。]{0,8}(お|ご)?名前|(お|ご)名前[^。]{0,8}(お分か|分か|わか|ご存じ|存じ|教え|伺|うかが|どちら|なんて|何て)|(誰|どなた)宛|誰宛て/;
   var ANSWERED_CALL = /(もしもし|株式会社|有限会社|合同会社|でございます|社長の|代表の|担当の|私が|わたくし)/;
   var PERSON_PHRASES = [
     [/(私|自分|わたし)(と|や|＋)(妻|夫|家内|主人|嫁|息子|娘|息子夫婦)/, 2],
@@ -1112,6 +1114,8 @@
     recapped = /* @__PURE__ */ new Set();
     /** 言い直した台本。同じ台本を何度も流し直さないために持つ。 */
     replayed = /* @__PURE__ */ new Set();
+    /** 取次ぎ先を尋ね返された回数。2回目は食い下がらない。 */
+    contactUnknownAsks = 0;
     /** 「ホームページを見て」と言われた回数。2回目は食い下がらない。 */
     hpDeflections = 0;
     /** 一度でも HP 参照があったか。以後はメールアドレスの催促をしない。 */
@@ -1172,6 +1176,7 @@
       if (this.absentMode && !this.state.ended) {
         return this.absentFollowUp(text, fired);
       }
+      if (CONTACT_UNKNOWN.test(text)) return this.handleContactUnknown(fired);
       if (this.isHpReference(text)) return this.handleHpReference(fired);
       if (this.isDecline(text)) {
         this.refusalStreak++;
@@ -1662,6 +1667,27 @@
       }
       return this.say("reject", this.toPhase("P0X"), fired, "\u4E0D\u5728: \u78BA\u8A8D\u304C\u53D6\u308C\u306A\u3044\u305F\u3081\u7C98\u3089\u305A\u7D42\u8A71");
     }
+    // ---------- 受付ガード（担当者名の確認・取次ぎ先不明） ----------
+    /**
+     * 「担当者のお名前は分かりますか」「誰に繋げばいいですか」への切り返し。
+     *
+     * こちらは特定の個人名を持っていないので、名前で答えることはできない。
+     * 部署（人事・総務・福利厚生）と役職（代表者）で取次ぎ先を示して、
+     * 相手が動ける形にして返す。フェーズは進めない（まだ担当者に届いていないため）。
+     */
+    handleContactUnknown(fired) {
+      this.contactUnknownAsks++;
+      this.unknownStreak = 0;
+      if (this.contactUnknownAsks >= 2) {
+        return this.say("reject", this.toPhase("P0X"), fired, "\u53D6\u6B21\u304E\u5148\u304C\u6C7A\u307E\u3089\u305A \u2192 \u7C98\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
+      }
+      return this.speakOnly(
+        "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u7279\u5B9A\u306E\u500B\u4EBA\u540D\u3067\u306F\u306A\u304F\u3001\u73FE\u5728\u5FA1\u793E\u3067\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u3084\u798F\u5229\u539A\u751F\u3092\u3054\u62C5\u5F53\u3055\u308C\u3066\u3044\u308B\u65B9\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+        this.state.phase,
+        fired,
+        "\u62C5\u5F53\u8005\u540D\u306E\u78BA\u8A8D\u30FB\u53D6\u6B21\u304E\u5148\u4E0D\u660E \u2192 \u90E8\u7F72\u3068\u5F79\u8077\u3067\u53D6\u6B21\u304E\u5148\u3092\u793A\u3057\u3066\u518D\u4F9D\u983C"
+      );
+    }
     // ---------- 「ホームページを見て」への対応 ----------
     /** 「ホームページに載っている」型の回避かどうか。 */
     isHpReference(text) {
@@ -1685,7 +1711,7 @@
       }
       this.refusalStreak++;
       return this.speakOnly(
-        `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${DEMO_SCENARIO.contactTitle}\u69D8\u3068\u4E00\u5EA6${DEMO_SCENARIO.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+        `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${DEMO_SCENARIO.contactTitle}\u69D8\u3068\u4E00\u5EA6${DEMO_SCENARIO.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`,
         this.toPhase("P7"),
         fired,
         "HP\u53C2\u7167 \u2192 \u9001\u4ED8\u5148\u306F\u805E\u304B\u305A\u3001\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u306E\u65E5\u7A0B\u6253\u8A3A\u306B\u5207\u308A\u66FF\u3048"
@@ -1930,7 +1956,7 @@
     /(担当|責任者|代表|社長)(の者)?(です|でございます)/,
     /お電話代わりました/
   ];
-  var UNKNOWN_CONTACT = /(担当(者|の方)?(が|は|も)?\s*(誰|どなた|分か(ら|り)|わか(ら|り)|不明|いない|決まって))|(誰|どなた)(に|へ|宛)?\s*(繋|つな|回|お伝え|渡せ)|(どこ|どちら|何)(の)?(部署|課|担当|窓口)|担当部署|担当窓口|(誰|どなた)宛/;
+  var UNKNOWN_CONTACT = CONTACT_UNKNOWN;
   var PURPOSE_FOLLOWUP = /(具体的|内容|詳し|中身|どんな話|なんの話|何の話|要する|どういうこと)/;
   function detectHandover(text) {
     return HANDOVER_PATTERNS.some((p) => p.test(text));
@@ -1990,7 +2016,11 @@
       if (UNKNOWN_CONTACT.test(text)) {
         if (!this.departmentSuggested) {
           this.departmentSuggested = true;
-          return this.speak(
+          return CONTACT_NAME_ASKED.test(text) ? this.speak(
+            "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7279\u5B9A\u306E\u304A\u540D\u524D\u3067\u306F\u306A\u304F\u3001\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u306E\u3054\u62C5\u5F53\u8005\u69D8\u304B\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "\u62C5\u5F53\u8005\u540D\u306E\u78BA\u8A8D \u2192 \u90E8\u7F72\u30FB\u5F79\u8077\u3092\u6307\u5B9A\u3057\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
+            fired
+          ) : this.speak(
             "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7DCF\u52D9\u3084\u4EBA\u4E8B\u306E\u3054\u62C5\u5F53\u8005\u69D8\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\uFF08\u793E\u9577\u69D8\uFF09\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
             "\u62C5\u5F53\u4E0D\u660E \u2192 \u7DCF\u52D9\u30FB\u4EBA\u4E8B\u30FB\u4EE3\u8868\u8005\u3092\u6319\u3052\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
             fired
