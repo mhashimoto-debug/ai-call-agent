@@ -699,36 +699,88 @@
   var wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
   async function speakUtterance(raw, opt) {
     if (!("speechSynthesis" in window) || !raw.trim()) return;
+    const token = playbackToken();
     const sentences = splitForSpeech(speechText(raw));
     for (let i = 0; i < sentences.length; i++) {
+      if (token.cancelled) return;
       await speakOne(sentences[i], opt);
       if (i < sentences.length - 1) await wait(opt.gapMs ?? 220);
     }
   }
+  var generation = 0;
+  function playbackToken() {
+    const started = generation;
+    return {
+      get cancelled() {
+        return started !== generation;
+      }
+    };
+  }
+  function stopAll() {
+    generation++;
+    window.speechSynthesis?.cancel();
+    stopAudio();
+  }
   var currentAudio = null;
+  var settleCurrent = null;
   function stopAudio() {
     const a = currentAudio;
+    const settle = settleCurrent;
     currentAudio = null;
-    if (!a) return;
-    a.pause();
-    a.currentTime = 0;
+    settleCurrent = null;
+    if (a) {
+      a.pause();
+      a.currentTime = 0;
+    }
+    settle?.(false);
   }
-  function playAudioFile(url) {
+  function loadClip(url) {
+    const audio = new Audio(url);
+    audio.preload = "auto";
+    audio.load();
+    return audio;
+  }
+  function playClip(audio) {
     stopAudio();
+    if (audio.error) return Promise.resolve(false);
     return new Promise((resolve) => {
-      const audio = new Audio(url);
-      currentAudio = audio;
       let done = false;
       const finish = (ok) => {
         if (done) return;
         done = true;
-        if (currentAudio === audio) currentAudio = null;
+        if (currentAudio === audio) {
+          currentAudio = null;
+          settleCurrent = null;
+        }
         resolve(ok);
       };
+      currentAudio = audio;
+      settleCurrent = finish;
       audio.onended = () => finish(true);
       audio.onerror = () => finish(false);
       audio.play().catch(() => finish(false));
     });
+  }
+  function playbackRuns(segments) {
+    const runs = [];
+    for (const s of segments) {
+      const prev = runs.at(-1);
+      if (prev && !prev.audioFile && !s.audioFile) runs[runs.length - 1] = { text: prev.text + s.text };
+      else runs.push(s);
+    }
+    return runs;
+  }
+  async function playSegments(segments, player, token) {
+    const queue = playbackRuns(segments).map((run) => ({
+      run,
+      clip: run.audioFile ? player.load(run.audioFile) : void 0
+    }));
+    for (const { run, clip: clip2 } of queue) {
+      if (token.cancelled) return;
+      if (clip2 !== void 0 && await player.play(clip2)) continue;
+      if (token.cancelled) return;
+      await player.speak(run.text);
+    }
   }
 
   // src/web/mic.ts
@@ -904,8 +956,9 @@
     return { text, applied };
   }
 
-  // src/demo/dialogEngine.ts
+  // src/demo/voiceLines.ts
   var AUDIO_BASE = "public/audio/";
+  var audioUrl = (file) => `${AUDIO_BASE}${file}`;
   var VOICE_LINES = {
     greeting: {
       file: "p0_greeting.mp3",
@@ -968,21 +1021,227 @@
       text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u304A\u623B\u308A\u306E\u969B\u306B\u3054\u6848\u5185\u8CC7\u6599\u3092\u304A\u6E21\u3057\u3067\u304D\u308C\u3070\u3068\u5B58\u3058\u307E\u3059\u306E\u3067\u3001\u6050\u308C\u5165\u308A\u307E\u3059\u304C\u3054\u62C5\u5F53\u8005\u69D8\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u304B\u3001\u3054\u76F4\u901A\u306E\u304A\u96FB\u8A71\u756A\u53F7\u3092\u304A\u4F3A\u3044\u3057\u3066\u3082\u3088\u308D\u3057\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F"
     }
   };
+  function hearingQuestion(id) {
+    return (HEARING_SLOT_MAP.get(id)?.question ?? "").replace(/（[^）]*）\s*$/, "");
+  }
+  var sc = DEMO_SCENARIO;
+  var PHRASES = {
+    // ---- 受付ガード（取次ぎ先・用件の確認） ----
+    contactDepartment: {
+      file: "p0_contact_department.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u7279\u5B9A\u306E\u500B\u4EBA\u540D\u3067\u306F\u306A\u304F\u3001\u73FE\u5728\u5FA1\u793E\u3067\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u3084\u798F\u5229\u539A\u751F\u3092\u3054\u62C5\u5F53\u3055\u308C\u3066\u3044\u308B\u65B9\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    transferContactName: {
+      file: "b_contact_name.mp3",
+      text: "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7279\u5B9A\u306E\u304A\u540D\u524D\u3067\u306F\u306A\u304F\u3001\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u306E\u3054\u62C5\u5F53\u8005\u69D8\u304B\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    transferContactDepartment: {
+      file: "b_contact_department.mp3",
+      text: "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7DCF\u52D9\u3084\u4EBA\u4E8B\u306E\u3054\u62C5\u5F53\u8005\u69D8\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\uFF08\u793E\u9577\u69D8\uFF09\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    transferPurposeFollowup: {
+      file: "b_purpose_followup.mp3",
+      text: "\u306F\u3044\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5236\u5EA6\u5C0E\u5165\u72B6\u6CC1\u306B\u3064\u3044\u3066\u306E\u7C21\u5358\u306A\u78BA\u8A8D\u3067\u3054\u3056\u3044\u307E\u3059\u3002\u6050\u308C\u5165\u308A\u307E\u3059\u304C\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    // ---- ガードレールの切り返し ----
+    r5PublicBody: {
+      file: "r5_public_body.mp3",
+      text: "\u7D1B\u3089\u308F\u3057\u304F\u3066\u7533\u3057\u8A33\u3054\u3056\u3044\u307E\u305B\u3093\u3002\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3054\u3056\u3044\u307E\u3059\u3002"
+    },
+    hpReference: {
+      file: "r_hp_reference.mp3",
+      text: `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${sc.contactTitle}\u69D8\u3068\u4E00\u5EA6${sc.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`
+    },
+    // ---- R7 不在（{戻り時間} を挟むものは前後で分けて収録する） ----
+    r7AskReturnTime: {
+      file: "r7_ask_return_time.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002\u6539\u3081\u3066\u3053\u3061\u3089\u304B\u3089\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002"
+    },
+    r7AskContact: {
+      file: "r7_ask_contact.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    /** 「承知いたしました。」＋{戻り時間}頃に＋r7CallbackAskContact */
+    r7Ack: { file: "r7_ack.mp3", text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002" },
+    r7CallbackAskContact: {
+      file: "r7_callback_ask_contact.mp3",
+      text: "\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u5FF5\u306E\u305F\u3081\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    /** 「ありがとうございます。それでは」＋{戻り時間}頃に＋r7CallbackClosing */
+    r7Thanks: { file: "r7_thanks.mp3", text: "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u305D\u308C\u3067\u306F" },
+    r7CallbackClosing: {
+      file: "r7_callback_closing.mp3",
+      text: "\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\u3002"
+    },
+    // ---- P4/P5 メールが使えない ----
+    postal: { file: "p5_postal.mp3", text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u304A\u9001\u308A\u3044\u305F\u3057\u307E\u3059\u3002" },
+    postalFiscal: {
+      file: "p5_postal_fiscal.mp3",
+      text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u3082\u304A\u9001\u308A\u3067\u304D\u307E\u3059\u3002"
+    },
+    // ---- P7 条件分岐 ----
+    onlineHowto: {
+      file: "p7_online_howto.mp3",
+      text: "\u30B9\u30DE\u30FC\u30C8\u30D5\u30A9\u30F3\u3067\u3082\u53C2\u52A0\u3067\u304D\u307E\u3059\u3002\u30E1\u30FC\u30EB\u3067\u304A\u9001\u308A\u3059\u308BURL\u3092\u30BF\u30C3\u30D7\u3044\u305F\u3060\u304F\u3060\u3051\u3067\u3059\u306E\u3067\u3001\u96E3\u3057\u3044\u64CD\u4F5C\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u3002"
+    },
+    noTravel: { file: "p7_no_travel.mp3", text: "\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u3001\u3054\u79FB\u52D5\u3084\u3054\u6765\u793E\u306F\u4E0D\u8981\u3067\u3054\u3056\u3044\u307E\u3059\u3002" },
+    // ---- P8 ヒアリング（未取得の項目を上から順に聞く） ----
+    askH1: { file: "p8_h1_ideco.mp3", text: hearingQuestion("H1") },
+    askH2: { file: "p8_h2_retirement.mp3", text: hearingQuestion("H2") },
+    askH3: { file: "p8_h3_age.mp3", text: hearingQuestion("H3") },
+    askH4: { file: "p8_h4_officers.mp3", text: hearingQuestion("H4") },
+    askH5: { file: "p8_h5_insured.mp3", text: hearingQuestion("H5") },
+    askH6: { file: "p8_h6_authority.mp3", text: hearingQuestion("H6") },
+    askH7: { file: "p8_h7_fiscal.mp3", text: hearingQuestion("H7") },
+    askEmail: {
+      file: "p8_email.mp3",
+      text: "\u8CC7\u6599\u3068\u30AA\u30F3\u30E9\u30A4\u30F3\u4F1A\u8B70\u306EURL\u3092\u304A\u9001\u308A\u3057\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    /** 「復唱させていただきます。」＋{メールアドレス}＋emailConfirmPost */
+    emailConfirmPre: { file: "p8_email_confirm_pre.mp3", text: "\u5FA9\u5531\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u3002" },
+    emailConfirmPost: { file: "p8_email_confirm_post.mp3", text: "\u3067\u304A\u9593\u9055\u3044\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F" },
+    askCallbackPhone: {
+      file: "p8_callback_phone.mp3",
+      text: "\u524D\u65E5\u306B\u78BA\u8A8D\u306E\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u304A\u96FB\u8A71\u756A\u53F7\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    askCallbackWindow: { file: "p8_callback_window.mp3", text: "\u524D\u65E5\u306E\u3054\u9023\u7D61\u306F\u3001\u4F55\u6642\u9803\u304C\u7E4B\u304C\u308A\u3084\u3059\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F" },
+    /** 「この番号でいいです」への返事。次の質問の前に添える */
+    currentNumberAck: {
+      file: "p8_current_number_ack.mp3",
+      text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u3053\u3061\u3089\u306E\u756A\u53F7\u5B9B\u306B\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u307E\u3059\u306D\u3002"
+    },
+    currentNumberEmail: {
+      file: "p8_current_number_email.mp3",
+      text: "\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3082\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    calendarRequest: {
+      file: "p8_calendar_request.mp3",
+      text: `\u62C5\u5F53\u306E\u4E88\u5B9A\u306E\u517C\u306D\u5408\u3044\u3067\u3001\u3082\u3057\u65E5\u7A0B\u5909\u66F4\u306B\u306A\u308A\u307E\u3059\u3068\u6B21\u56DE\u306E\u3054\u6848\u5185\u304C\u304B\u306A\u308A\u5148\u306B\u306A\u308B\u53EF\u80FD\u6027\u304C\u3054\u3056\u3044\u307E\u3059\u3002\u304A\u624B\u6570\u3067\u3059\u304C${sc.proposedDate}${sc.proposedTime}\u3067\u3001\u4E00\u65E6\u30AB\u30EC\u30F3\u30C0\u30FC\u306B\u3054\u4E88\u5B9A\u3060\u3051\u5165\u308C\u3066\u304A\u3044\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002`
+    },
+    /**
+     * 聞き取れなかったときの前置き（質問の頭に付ける）。
+     * 同じ質問を一字一句同じ言い方で繰り返すと機械的に聞こえるため、聞き直すたびに変える。
+     */
+    reask1: { file: "p8_reask_1.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3082\u3046\u4E00\u5EA6\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002" },
+    reask2: { file: "p8_reask_2.mp3", text: "\u304A\u624B\u6570\u3092\u304A\u304B\u3051\u3044\u305F\u3057\u307E\u3059\u3002" },
+    reask3: { file: "p8_reask_3.mp3", text: "\u5FF5\u306E\u305F\u3081\u78BA\u8A8D\u3055\u305B\u3066\u304F\u3060\u3055\u3044\u3002" },
+    // ---- 終話 ----
+    endThanks: { file: "end_thanks.mp3", text: "\u672C\u65E5\u306F\u304A\u6642\u9593\u3092\u3044\u305F\u3060\u304D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002" },
+    endShort: { file: "end_short.mp3", text: "\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002" },
+    // ---- 短い聞き直し（直前と同じ主台本を繰り返す代わりに、要点だけを一言で聞く） ----
+    recapGreeting: {
+      file: "recap_p0_greeting.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u30012026\u5E7412\u6708\u306E\u6CD5\u6539\u6B63\u306E\u4EF6\u3067\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapOverview: {
+      file: "recap_p1_overview.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u3067\u306F\u5F79\u54E1\u69D8\u306E\u9000\u8077\u91D1\u306E\u3054\u6E96\u5099\u306F\u4F55\u304B\u3055\u308C\u3066\u3044\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapHearingAgeCount: {
+      file: "recap_p2_p3_hearing.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5F79\u54E1\u69D8\u3068\u5F93\u696D\u54E1\u69D8\u3092\u5408\u308F\u305B\u3066\u3001\u304A\u304A\u3088\u305D\u4F55\u540D\u69D8\u3067\u3044\u3089\u3063\u3057\u3083\u3044\u307E\u3059\u304B\uFF1F"
+    },
+    recapHearingFiscalEmail: {
+      file: "recap_p4_p5_hearing.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u306F\u3044\u3064\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapSchedule: {
+      file: "recap_p7_schedule.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u6765\u9031\u306E\u6C34\u66DC\u65E514\u6642\u9803\u3067\u3057\u305F\u3089\u3001\u3054\u90FD\u5408\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapReschedule: {
+      file: "recap_reschedule.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u6728\u66DC\u65E5\u306E15\u6642\u9803\u3067\u3057\u305F\u3089\u3001\u3054\u90FD\u5408\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapContact: {
+      file: "recap_p8_recovery.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapHeadcount: {
+      file: "recap_headcount.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5F93\u696D\u54E1\u6570\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapExpert: {
+      file: "recap_r3_expert.mp3",
+      text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u30BB\u30AB\u30F3\u30C9\u30AA\u30D4\u30CB\u30AA\u30F3\u3068\u3057\u3066\u60C5\u5831\u306E\u3054\u78BA\u8A8D\u3060\u3051\u3067\u3082\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
+    recapDocument: { file: "recap_r4_document.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" },
+    recapAbsent: { file: "recap_r7_absent.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" }
+  };
+  var UNRECORDED = /* @__PURE__ */ new Set([
+    "p0_contact_department.mp3",
+    "b_contact_name.mp3",
+    "b_contact_department.mp3",
+    "b_purpose_followup.mp3",
+    "r5_public_body.mp3",
+    "r_hp_reference.mp3",
+    "r7_ask_return_time.mp3",
+    "r7_ask_contact.mp3",
+    "r7_ack.mp3",
+    "r7_callback_ask_contact.mp3",
+    "r7_thanks.mp3",
+    "r7_callback_closing.mp3",
+    "p5_postal.mp3",
+    "p5_postal_fiscal.mp3",
+    "p7_online_howto.mp3",
+    "p7_no_travel.mp3",
+    "p8_h1_ideco.mp3",
+    "p8_h2_retirement.mp3",
+    "p8_h3_age.mp3",
+    "p8_h4_officers.mp3",
+    "p8_h5_insured.mp3",
+    "p8_h6_authority.mp3",
+    "p8_h7_fiscal.mp3",
+    "p8_email.mp3",
+    "p8_email_confirm_pre.mp3",
+    "p8_email_confirm_post.mp3",
+    "p8_callback_phone.mp3",
+    "p8_callback_window.mp3",
+    "p8_current_number_ack.mp3",
+    "p8_current_number_email.mp3",
+    "p8_calendar_request.mp3",
+    "p8_reask_1.mp3",
+    "p8_reask_2.mp3",
+    "p8_reask_3.mp3",
+    "end_thanks.mp3",
+    "end_short.mp3",
+    "recap_p0_greeting.mp3",
+    "recap_p1_overview.mp3",
+    "recap_p2_p3_hearing.mp3",
+    "recap_p4_p5_hearing.mp3",
+    "recap_p7_schedule.mp3",
+    "recap_reschedule.mp3",
+    "recap_p8_recovery.mp3",
+    "recap_headcount.mp3",
+    "recap_r3_expert.mp3",
+    "recap_r4_document.mp3",
+    "recap_r7_absent.mp3"
+  ]);
+  function clip(line) {
+    return UNRECORDED.has(line.file) ? { text: line.text } : { text: line.text, audioFile: audioUrl(line.file) };
+  }
+  var tts = (text) => ({ text });
+  function filterSegment(s) {
+    const text = autoFix(s.text).text;
+    return text === s.text ? s : { text };
+  }
+
+  // src/demo/dialogEngine.ts
   var CLOSING_LINES = /* @__PURE__ */ new Set(["reject", "closing"]);
   var RECAP = {
-    greeting: "\u6050\u308C\u5165\u308A\u307E\u3059\u30012026\u5E7412\u6708\u306E\u6CD5\u6539\u6B63\u306E\u4EF6\u3067\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    overview: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u3067\u306F\u5F79\u54E1\u69D8\u306E\u9000\u8077\u91D1\u306E\u3054\u6E96\u5099\u306F\u4F55\u304B\u3055\u308C\u3066\u3044\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    hearingAgeCount: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5F79\u54E1\u69D8\u3068\u5F93\u696D\u54E1\u69D8\u3092\u5408\u308F\u305B\u3066\u3001\u304A\u304A\u3088\u305D\u4F55\u540D\u69D8\u3067\u3044\u3089\u3063\u3057\u3083\u3044\u307E\u3059\u304B\uFF1F",
-    hearingFiscalEmail: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u306F\u3044\u3064\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    schedule: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u6765\u9031\u306E\u6C34\u66DC\u65E514\u6642\u9803\u3067\u3057\u305F\u3089\u3001\u3054\u90FD\u5408\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    reschedule: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u6728\u66DC\u65E5\u306E15\u6642\u9803\u3067\u3057\u305F\u3089\u3001\u3054\u90FD\u5408\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    contact: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r1NoSystem: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5F93\u696D\u54E1\u6570\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r2Busy: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5F93\u696D\u54E1\u6570\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r3Expert: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u30BB\u30AB\u30F3\u30C9\u30AA\u30D4\u30CB\u30AA\u30F3\u3068\u3057\u3066\u60C5\u5831\u306E\u3054\u78BA\u8A8D\u3060\u3051\u3067\u3082\u3044\u304B\u304C\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r4Document: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r5OtherScheme: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5F93\u696D\u54E1\u6570\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
-    r7Absent: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    greeting: "recapGreeting",
+    overview: "recapOverview",
+    hearingAgeCount: "recapHearingAgeCount",
+    hearingFiscalEmail: "recapHearingFiscalEmail",
+    schedule: "recapSchedule",
+    reschedule: "recapReschedule",
+    contact: "recapContact",
+    r1NoSystem: "recapHeadcount",
+    r2Busy: "recapHeadcount",
+    r3Expert: "recapExpert",
+    r4Document: "recapDocument",
+    r5OtherScheme: "recapHeadcount",
+    r7Absent: "recapAbsent"
   };
   var PHASE_ANCHOR = {
     P0: "greeting",
@@ -996,7 +1255,6 @@
     P8: "contact",
     P9: "closing"
   };
-  var audioUrl = (file) => `${AUDIO_BASE}${file}`;
   var YES = /(はい|ええ|うん|そうです|そうですね|そうしま|もちろん|ぜひ|是非|わかりました|分かりました|承知|了解|大丈夫|平気|問題ありませ|問題ない|構いませ|かまいませ|お願いし|いいです|いいよ|良いです|結構ですよ|それでいい|それで結構|それで大丈夫|それでお願い|オッケー|オーケー|ＯＫ|OK|どうぞ|お聞きし|聞いてみ|やってみ)/i;
   var NO = /(いいえ|いえいえ|いや|結構です(?!よ)|けっこうです|いりません|要りません|必要ありませ|必要ない|不要|遠慮|間に合って|やめ|やらない|やりません|しません|やめておき|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|見送|お断り|断りし|だめ|ダメ|駄目)/;
   var ASK_PURPOSE = /(ご用件|用件|ご用|どういった|どういう|どのような|どんな|なんの|何の|なんでしょ|どちら様|どちらさま|どなた|失礼ですが|どこの|お名前|会社名|目的|なにか|何か)(です|でしょ|ですか|ますか|かしら)?/;
@@ -1113,12 +1371,20 @@
   }
   var AGE_ERA = /(\d{2})\s*代/;
   var BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
-  var REASK_PREFIX = [
-    "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3082\u3046\u4E00\u5EA6\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002",
-    "\u304A\u624B\u6570\u3092\u304A\u304B\u3051\u3044\u305F\u3057\u307E\u3059\u3002",
-    "\u5FF5\u306E\u305F\u3081\u78BA\u8A8D\u3055\u305B\u3066\u304F\u3060\u3055\u3044\u3002"
-  ];
+  var REASK_PREFIX = ["reask1", "reask2", "reask3"];
   var EARLY_PHASES = /* @__PURE__ */ new Set(["P0", "P1"]);
+  var SLOT_QUESTION = {
+    H1: "askH1",
+    H2: "askH2",
+    H3: "askH3",
+    H4: "askH4",
+    H5: "askH5",
+    H6: "askH6",
+    H7: "askH7",
+    email: "askEmail",
+    callbackPhone: "askCallbackPhone",
+    callbackWindow: "askCallbackWindow"
+  };
   var DialogEngine = class _DialogEngine {
     constructor(state2) {
       this.state = state2;
@@ -1239,14 +1505,9 @@
         case "P8":
           return this.p8(text, fired);
         case "P9":
-          return this.speakOnly(
-            "\u672C\u65E5\u306F\u304A\u6642\u9593\u3092\u3044\u305F\u3060\u304D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002",
-            "END",
-            fired,
-            "\u7DE0\u3081\u5B8C\u4E86"
-          );
+          return this.speakPhrases(["endThanks"], "END", fired, "\u7DE0\u3081\u5B8C\u4E86");
         default:
-          return this.speakOnly("\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3057\u305F\u3002\u5931\u793C\u3044\u305F\u3057\u307E\u3059\u3002", "END", fired, "\u7D42\u8A71");
+          return this.speakPhrases(["endShort"], "END", fired, "\u7D42\u8A71");
       }
     }
     /**
@@ -1299,11 +1560,11 @@
         this.unknownStreak = 0;
         if (PUBLIC_BODY_CONFUSION.test(text) && !this.publicBodyCorrected) {
           this.publicBodyCorrected = true;
-          return this.speakOnly(
-            "\u7D1B\u3089\u308F\u3057\u304F\u3066\u7533\u3057\u8A33\u3054\u3056\u3044\u307E\u305B\u3093\u3002\u5236\u5EA6\u306F\u539A\u751F\u52B4\u50CD\u7701\u306E\u7BA1\u8F44\u3067\u3059\u304C\u3001\u79C1\u3069\u3082\u306F\u6C11\u9593\u306E\u5C0E\u5165\u652F\u63F4\u4E8B\u696D\u8005\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
+          return this.speakPhrases(
+            ["r5PublicBody"],
             this.state.phase,
             fired,
-            "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09"
+            "R5: \u516C\u7684\u6A5F\u95A2\u3068\u306E\u8AA4\u8A8D\u3092\u5373\u5EA7\u306B\u8A02\u6B63"
           );
         }
         const reply = this.guardrailReply(
@@ -1454,8 +1715,8 @@
       if (got.length === 0 && EMAIL_UNAVAILABLE.test(text) && !this.postalOffered) {
         this.postalOffered = true;
         this.unknownStreak = 0;
-        return this.speakOnly(
-          this.state.hearing.H7 ? "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u304A\u9001\u308A\u3044\u305F\u3057\u307E\u3059\u3002" : "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002\u305D\u308C\u3067\u306F\u3001\u5FA1\u793E\u306E\u6C7A\u7B97\u6708\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F\u8CC7\u6599\u306F\u90F5\u9001\u3067\u3082\u304A\u9001\u308A\u3067\u304D\u307E\u3059\u3002",
+        return this.speakPhrases(
+          [this.state.hearing.H7 ? "postal" : "postalFiscal"],
           this.state.phase,
           fired,
           "\u30E1\u30FC\u30EB\u304C\u4F7F\u3048\u306A\u3044 \u2192 \u90F5\u9001\u306B\u5207\u308A\u66FF\u3048\u3066\u6C7A\u7B97\u6708\u306E\u307F\u78BA\u8A8D"
@@ -1477,8 +1738,8 @@
     p7(text, fired) {
       if (/(ズーム|zoom|オンライン|ウェブ|web|リモート|url|URL)/i.test(text) && /(何|なに|わからない|分からない|使えない|できない|詳しくない|苦手|不安|やったこと)/.test(text)) {
         this.unknownStreak = 0;
-        return this.speakOnly(
-          "\u30B9\u30DE\u30FC\u30C8\u30D5\u30A9\u30F3\u3067\u3082\u53C2\u52A0\u3067\u304D\u307E\u3059\u3002\u30E1\u30FC\u30EB\u3067\u304A\u9001\u308A\u3059\u308BURL\u3092\u30BF\u30C3\u30D7\u3044\u305F\u3060\u304F\u3060\u3051\u3067\u3059\u306E\u3067\u3001\u96E3\u3057\u3044\u64CD\u4F5C\u306F\u3054\u3056\u3044\u307E\u305B\u3093\u3002",
+        return this.speakPhrases(
+          ["onlineHowto"],
           "P7",
           fired,
           "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u5546\u8AC7\u306E\u8AAC\u660E"
@@ -1486,8 +1747,8 @@
       }
       if (/(遠い|距離|来られ|お越し|伺うの)/.test(text)) {
         this.unknownStreak = 0;
-        return this.speakOnly(
-          "\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u3001\u3054\u79FB\u52D5\u3084\u3054\u6765\u793E\u306F\u4E0D\u8981\u3067\u3054\u3056\u3044\u307E\u3059\u3002",
+        return this.speakPhrases(
+          ["noTravel"],
           "P7",
           fired,
           "\u6761\u4EF6\u5206\u5C90: \u30AA\u30F3\u30E9\u30A4\u30F3\u306A\u306E\u3067\u79FB\u52D5\u306F\u4E0D\u8981"
@@ -1501,10 +1762,10 @@
         return this.repair(fired, "\u4EE3\u66FF\u65E5\u7A0B\u3082\u5408\u308F\u305A");
       }
       if ((YES.test(text) || SCHEDULE_OK.test(text) || TIME_SLOT.test(text)) && !NO.test(text)) {
-        const sc = DEMO_SCENARIO;
+        const sc2 = DEMO_SCENARIO;
         applyExtracted(this.state, {
-          appointment_date: sc.proposedDate,
-          appointment_time: sc.proposedTime,
+          appointment_date: sc2.proposedDate,
+          appointment_time: sc2.proposedTime,
           zoom_agreed: true,
           duration_agreed: true
         });
@@ -1531,9 +1792,9 @@
           } else {
             const attempt = this.reasked.get(this.pending) ?? 0;
             this.reasked.set(this.pending, attempt + 1);
-            const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "";
-            return this.speakOnly(
-              `${prefix}${this.askText(this.pending)}`,
+            const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "reask1";
+            return this.speakPhrases(
+              [prefix, ...this.askParts(this.pending)],
               "P8",
               fired,
               `${this.pending} \u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`
@@ -1549,17 +1810,17 @@
      * lead は次の質問の前に添える一言（「こちらの番号宛にご連絡します」など）。
      * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
      */
-    advanceP8(notes, fired, lead = "") {
+    advanceP8(notes, fired, lead) {
+      const leadParts = lead ? [lead] : [];
       const nextSlot = this.nextSlot();
       if (!nextSlot) {
         this.pending = null;
         if (!this.state.calendarRequested) {
-          const sc = DEMO_SCENARIO;
-          return this.speakOnly(
-            `${lead}\u62C5\u5F53\u306E\u4E88\u5B9A\u306E\u517C\u306D\u5408\u3044\u3067\u3001\u3082\u3057\u65E5\u7A0B\u5909\u66F4\u306B\u306A\u308A\u307E\u3059\u3068\u6B21\u56DE\u306E\u3054\u6848\u5185\u304C\u304B\u306A\u308A\u5148\u306B\u306A\u308B\u53EF\u80FD\u6027\u304C\u3054\u3056\u3044\u307E\u3059\u3002\u304A\u624B\u6570\u3067\u3059\u304C${sc.proposedDate}${sc.proposedTime}\u3067\u3001\u4E00\u65E6\u30AB\u30EC\u30F3\u30C0\u30FC\u306B\u3054\u4E88\u5B9A\u3060\u3051\u5165\u308C\u3066\u304A\u3044\u3066\u3044\u305F\u3060\u3051\u307E\u3059\u3068\u52A9\u304B\u308A\u307E\u3059\u3002`,
+          return this.speakPhrases(
+            [...leadParts, "calendarRequest"],
             "P8",
             fired,
-            `${notes.join(" / ") || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 \u30AB\u30EC\u30F3\u30C0\u30FC\u767B\u9332\u4F9D\u983C\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
+            `${notes.join(" / ") || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 \u30AB\u30EC\u30F3\u30C0\u30FC\u767B\u9332\u4F9D\u983C`
           );
         }
         return this.say(
@@ -1570,11 +1831,11 @@
         );
       }
       this.pending = nextSlot;
-      return this.speakOnly(
-        `${lead}${this.askText(nextSlot)}`,
+      return this.speakPhrases(
+        [...leadParts, ...this.askParts(nextSlot)],
         "P8",
         fired,
-        `${notes.length > 0 ? notes.join(" / ") + " \u2192 " : ""}\u6B21\u306F ${nextSlot}\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
+        `${notes.length > 0 ? notes.join(" / ") + " \u2192 " : ""}\u6B21\u306F ${nextSlot}`
       );
     }
     /** 折り返し先の電話番号を聞いている場面か（P8 の連絡先確認・不在時の折り返し先確認）。 */
@@ -1591,18 +1852,17 @@
       this.unknownStreak = 0;
       this.expecting = null;
       if (this.absentMode) return this.absentFollowUp(text, fired);
-      const ack = "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u3053\u3061\u3089\u306E\u756A\u53F7\u5B9B\u306B\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u307E\u3059\u306D\u3002";
       const note = "\u767A\u4FE1\u756A\u53F7\u306E\u6307\u5B9A \u2192 \u3053\u306E\u756A\u53F7\u3067\u9023\u7D61\u5148\u3092\u78BA\u5B9A";
       if (!this.state.email) {
         this.pending = "email";
-        return this.speakOnly(
-          `${ack}\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3082\u304A\u4F3A\u3044\u3067\u304D\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+        return this.speakPhrases(
+          ["currentNumberAck", "currentNumberEmail"],
           "P8",
           fired,
-          `${note} \u2192 \u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078\uFF08\u9332\u97F3\u306A\u3057\u30FB\u97F3\u58F0\u5408\u6210\uFF09`
+          `${note} \u2192 \u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078`
         );
       }
-      return this.advanceP8([note], fired, ack);
+      return this.advanceP8([note], fired, "currentNumberAck");
     }
     /** そのスロットがすでに埋まっているか。 */
     isFilled(slot) {
@@ -1628,19 +1888,12 @@
       if (!this.state.callbackWindow) return "callbackWindow";
       return null;
     }
-    askText(slot) {
-      switch (slot) {
-        case "email":
-          return "\u8CC7\u6599\u3068\u30AA\u30F3\u30E9\u30A4\u30F3\u4F1A\u8B70\u306EURL\u3092\u304A\u9001\u308A\u3057\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F";
-        case "emailConfirm":
-          return `\u5FA9\u5531\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u3002${this.state.email} \u3067\u304A\u9593\u9055\u3044\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`;
-        case "callbackPhone":
-          return "\u524D\u65E5\u306B\u78BA\u8A8D\u306E\u3054\u9023\u7D61\u3092\u5DEE\u3057\u4E0A\u3052\u305F\u3044\u306E\u3067\u3059\u304C\u3001\u304A\u96FB\u8A71\u756A\u53F7\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F";
-        case "callbackWindow":
-          return "\u524D\u65E5\u306E\u3054\u9023\u7D61\u306F\u3001\u4F55\u6642\u9803\u304C\u7E4B\u304C\u308A\u3084\u3059\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F";
-        default:
-          return (HEARING_SLOT_MAP.get(slot)?.question ?? "").replace(/（[^）]*）\s*$/, "");
+    /** その項目を尋ねる発話。メールアドレスの復唱は、取得したアドレスだけを音声合成で差し込む。 */
+    askParts(slot) {
+      if (slot === "emailConfirm") {
+        return ["emailConfirmPre", tts(`${this.state.email} `), "emailConfirmPost"];
       }
+      return [SLOT_QUESTION[slot]];
     }
     /** 「今どの項目を聞いているか」が分かっているので、その文脈で回答を解釈する。 */
     extract(slot, text) {
@@ -1718,8 +1971,8 @@
       const hasContact = Boolean(this.state.callbackPhone || this.state.email);
       const window2 = this.state.callbackWindow;
       if (window2 && hasContact) {
-        return this.speakOnly(
-          `\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\u3002\u305D\u308C\u3067\u306F${window2}\u9803\u306B\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u304A\u5FD9\u3057\u3044\u3068\u3053\u308D\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\u3002`,
+        return this.speakPhrases(
+          ["r7Thanks", tts(`${window2}\u9803\u306B`), "r7CallbackClosing"],
           this.toPhase("P0X"),
           fired,
           "\u4E0D\u5728: \u623B\u308A\u6642\u9593\u3068\u6298\u308A\u8FD4\u3057\u5148\u3092\u78BA\u4FDD \u2192 \u6298\u308A\u8FD4\u3057\u3092\u7D04\u675F\u3057\u3066\u7D42\u8A71"
@@ -1729,8 +1982,8 @@
       const askedContact = this.absentAsked.has("contact");
       if (!window2 && !askedWindow) {
         this.absentAsked.add("window");
-        return this.speakOnly(
-          "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\u3002\u6539\u3081\u3066\u3053\u3061\u3089\u304B\u3089\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002",
+        return this.speakPhrases(
+          ["r7AskReturnTime"],
           this.state.phase,
           fired,
           "\u4E0D\u5728: \u623B\u308A\u6642\u9593\u306E\u78BA\u8A8D"
@@ -1739,8 +1992,8 @@
       if (!hasContact && !askedContact) {
         this.absentAsked.add("contact");
         this.expecting = "contact";
-        return this.speakOnly(
-          window2 ? `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\u3002${window2}\u9803\u306B\u6539\u3081\u3066\u304A\u96FB\u8A71\u3044\u305F\u3057\u307E\u3059\u3002\u5FF5\u306E\u305F\u3081\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F` : "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306E\u304A\u96FB\u8A71\u756A\u53F7\u304B\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3060\u3051\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+        return this.speakPhrases(
+          window2 ? ["r7Ack", tts(`${window2}\u9803\u306B`), "r7CallbackAskContact"] : ["r7AskContact"],
           this.state.phase,
           fired,
           "\u4E0D\u5728: \u6298\u308A\u8FD4\u3057\u5148\u306E\u78BA\u8A8D"
@@ -1768,8 +2021,8 @@
       if (this.contactUnknownAsks >= 2) {
         return this.say("reject", this.toPhase("P0X"), fired, "\u53D6\u6B21\u304E\u5148\u304C\u6C7A\u307E\u3089\u305A \u2192 \u7C98\u3089\u305A\u4E01\u5BE7\u306B\u7D42\u8A71");
       }
-      return this.speakOnly(
-        "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u7279\u5B9A\u306E\u500B\u4EBA\u540D\u3067\u306F\u306A\u304F\u3001\u73FE\u5728\u5FA1\u793E\u3067\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u3084\u798F\u5229\u539A\u751F\u3092\u3054\u62C5\u5F53\u3055\u308C\u3066\u3044\u308B\u65B9\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+      return this.speakPhrases(
+        ["contactDepartment"],
         this.state.phase,
         fired,
         "\u62C5\u5F53\u8005\u540D\u306E\u78BA\u8A8D\u30FB\u53D6\u6B21\u304E\u5148\u4E0D\u660E \u2192 \u90E8\u7F72\u3068\u5F79\u8077\u3067\u53D6\u6B21\u304E\u5148\u3092\u793A\u3057\u3066\u518D\u4F9D\u983C"
@@ -1798,8 +2051,8 @@
       }
       this.refusalStreak++;
       this.meetingOfferedAt = this.state.turns.length;
-      return this.speakOnly(
-        `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${DEMO_SCENARIO.contactTitle}\u69D8\u3068\u4E00\u5EA6${DEMO_SCENARIO.meetingMinutes}\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`,
+      return this.speakPhrases(
+        ["hpReference"],
         this.toPhase("P7"),
         fired,
         "HP\u53C2\u7167 \u2192 \u9001\u4ED8\u5148\u306F\u805E\u304B\u305A\u3001\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u306E\u65E5\u7A0B\u6253\u8A3A\u306B\u5207\u308A\u66FF\u3048"
@@ -1932,9 +2185,7 @@
       if (this.unknownStreak === 1 && anchor && !this.replayed.has(anchor)) {
         this.replayed.add(anchor);
         if (!this.justSaid(VOICE_LINES[anchor].text)) {
-          return this.say(anchor, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u8A00\u3044\u76F4\u3059`, {
-            replay: true
-          });
+          return this.say(anchor, this.state.phase, fired, `${reason} \u2192 \u76F4\u524D\u306E\u8CEA\u554F\u3092\u8A00\u3044\u76F4\u3059`);
         }
         const recap = this.recapReply(
           anchor,
@@ -1958,13 +2209,10 @@
     }
     // ---------- 応答の確定（フィルタ・遷移検証・履歴） ----------
     /** 収録台本を1本読み上げる。画面表示テキストと音声は同じ定義から取る。 */
-    say(id, proposed, fired, matched, opts = {}) {
-      const line = VOICE_LINES[id];
-      const alreadySaid = this.said.has(id);
+    say(id, proposed, fired, matched) {
       this.said.add(id);
       this.lastLine = id;
-      const audioFile = !alreadySaid || opts.replay ? audioUrl(line.file) : void 0;
-      return this.emit(line.text, proposed, fired, matched, audioFile);
+      return this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
     }
     /**
      * 切り返しを流す。すでに同じ台本を流していれば、同じ文言を繰り返さず要点だけ聞き直す。
@@ -1980,19 +2228,24 @@
      */
     recapReply(id, proposed, fired, matched) {
       const recap = RECAP[id];
-      if (!recap || this.recapped.has(id) || this.justSaid(recap)) return null;
+      if (!recap || this.recapped.has(id) || this.justSaid(PHRASES[recap].text)) return null;
       this.recapped.add(id);
-      return this.speakOnly(recap, proposed, fired, matched);
+      return this.speakPhrases([recap], proposed, fired, matched);
     }
-    /** 収録の無い発話（P8 の個別質問など）。音声合成で読み上げる。 */
-    speakOnly(raw, proposed, fired, matched) {
+    /**
+     * 主台本以外の発話（P8 の個別質問・前置き・差し込みのある一言など）。
+     * 部品ごとに録音があれば MP3、無ければ音声合成で鳴らす。
+     */
+    speakPhrases(parts, proposed, fired, matched) {
       this.lastLine = null;
-      return this.emit(raw, proposed, fired, matched, void 0);
+      const segments = parts.map((p) => typeof p === "string" ? clip(PHRASES[p]) : p);
+      return this.emit(segments, proposed, fired, matched);
     }
-    emit(raw, proposed, fired, matched, audioFile) {
-      const fixed = autoFix(raw);
+    emit(segments, proposed, fired, matched) {
+      const raw = segments.map((s) => s.text).join("");
       const blocked = checkForbidden(raw).filter((v) => v.fixable);
-      const utterance = fixed.text;
+      const spoken = segments.map(filterSegment);
+      const utterance = spoken.map((s) => s.text).join("");
       applyExtracted(this.state, {
         calendar_requested: /カレンダー/.test(utterance),
         law_change_hook_used: /(法改正|62,?000円)/.test(utterance)
@@ -2017,7 +2270,7 @@
         matched,
         overrideReason: t.overrideReason,
         blocked,
-        audioFile
+        segments: spoken
       };
     }
     /** 相手の発話を履歴に積む（画面側から呼ぶ）。 */
@@ -2098,6 +2351,7 @@
         this.outcome = "handover";
         return {
           utterance: "",
+          segments: [],
           matched: "\u62C5\u5F53\u8005\u63A5\u7D9A\u3092\u691C\u77E5 \u2192 \u30AA\u30DA\u30EC\u30FC\u30BF\u30FC\u3078\u5F15\u304D\u7D99\u304E\uFF08AI \u306E\u767A\u8A71\u3092\u505C\u6B62\uFF09",
           outcome: "handover",
           handover: true,
@@ -2109,11 +2363,11 @@
         if (!this.departmentSuggested) {
           this.departmentSuggested = true;
           return isContactNameAsked(text) ? this.speak(
-            "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7279\u5B9A\u306E\u304A\u540D\u524D\u3067\u306F\u306A\u304F\u3001\u4EBA\u4E8B\u30FB\u7DCF\u52D9\u306E\u3054\u62C5\u5F53\u8005\u69D8\u304B\u4EE3\u8868\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "transferContactName",
             "\u62C5\u5F53\u8005\u540D\u306E\u78BA\u8A8D \u2192 \u90E8\u7F72\u30FB\u5F79\u8077\u3092\u6307\u5B9A\u3057\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
             fired
           ) : this.speak(
-            "\u5931\u793C\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u7DCF\u52D9\u3084\u4EBA\u4E8B\u306E\u3054\u62C5\u5F53\u8005\u69D8\u3001\u3042\u308B\u3044\u306F\u4EE3\u8868\u8005\u69D8\uFF08\u793E\u9577\u69D8\uFF09\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "transferContactDepartment",
             "\u62C5\u5F53\u4E0D\u660E \u2192 \u7DCF\u52D9\u30FB\u4EBA\u4E8B\u30FB\u4EE3\u8868\u8005\u3092\u6319\u3052\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
             fired
           );
@@ -2129,7 +2383,7 @@
         }
         if (this.purposeAsks === 2) {
           return this.speak(
-            "\u306F\u3044\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5236\u5EA6\u5C0E\u5165\u72B6\u6CC1\u306B\u3064\u3044\u3066\u306E\u7C21\u5358\u306A\u78BA\u8A8D\u3067\u3054\u3056\u3044\u307E\u3059\u3002\u6050\u308C\u5165\u308A\u307E\u3059\u304C\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F",
+            "transferPurposeFollowup",
             "\u7528\u4EF6\u3092\u91CD\u306D\u3066\u554F\u308F\u308C\u305F \u2192 \u5185\u5BB9\u3092\u4E00\u8A00\u3067\u793A\u3057\u3066\u53D6\u6B21\u304E\u3092\u518D\u4F9D\u983C",
             fired
           );
@@ -2144,29 +2398,23 @@
       }
       return this.say("greeting", "\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A \u2192 \u4F9D\u983C\u3092\u8A00\u3044\u76F4\u3059", fired);
     }
-    /** 収録の無い応答（具体的な部署の提示など）。音声合成で読み上げる。 */
-    speak(raw, matched, fired = []) {
-      return {
-        utterance: autoFix(raw).text,
-        matched,
-        outcome: this.outcome,
-        handover: false,
-        guardrails: fired,
-        blocked: checkForbidden(raw).filter((v) => v.fixable)
-      };
+    /** 主台本以外の応答（具体的な部署の提示など）。 */
+    speak(id, matched, fired = []) {
+      return this.reply(PHRASES[id], matched, fired);
     }
     say(id, matched, fired = []) {
-      const line = VOICE_LINES[id];
-      const utterance = autoFix(line.text).text;
-      const blocked = checkForbidden(line.text).filter((v) => v.fixable);
+      return this.reply(VOICE_LINES[id], matched, fired);
+    }
+    reply(line, matched, fired) {
+      const segment = filterSegment(clip(line));
       return {
-        utterance,
-        audioFile: audioUrl(line.file),
+        utterance: segment.text,
+        segments: [segment],
         matched,
         outcome: this.outcome,
         handover: false,
         guardrails: fired,
-        blocked
+        blocked: checkForbidden(line.text).filter((v) => v.fixable)
       };
     }
   };
@@ -2381,14 +2629,15 @@
     if (!voiceOn()) return Promise.resolve();
     return speakUtterance(text, { voice: selectedVoice(), rate: 1, gapMs: 240 });
   }
-  async function speakReply(text, audioFile) {
+  async function speakReply(segments) {
     if (!voiceOn()) return;
-    if (audioFile && await playAudioFile(audioFile)) return;
-    await speak(text);
+    await playSegments(segments, { load: loadClip, play: playClip, speak }, playbackToken());
   }
   function stopVoice() {
-    window.speechSynthesis?.cancel();
-    stopAudio();
+    stopAll();
+  }
+  function describeSource(segments) {
+    return playbackRuns(segments).map((r) => r.audioFile ? `\u9332\u97F3 ${r.audioFile.split("/").pop()}` : "\u97F3\u58F0\u5408\u6210").join(" \uFF0B ");
   }
   var pause = (ms) => new Promise((r) => window.setTimeout(r, ms));
   var lastPhase = null;
@@ -2442,13 +2691,13 @@
         lastPhase = r.phase;
       }
       const node = pushMessage("ai", "AI", r.utterance);
-      const source = r.audioFile ? `\u9332\u97F3 ${r.audioFile.split("/").pop()}` : "\u97F3\u58F0\u5408\u6210";
+      const source = describeSource(r.segments);
       const why = el("div", "flag", `\u5224\u5B9A: ${r.matched} \uFF0F \u97F3\u6E90: ${source}`);
       transcript().append(why);
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
-      await speakReply(r.utterance, r.audioFile);
+      await speakReply(r.segments);
       node.classList.remove("speaking");
       renderAll();
     } finally {
@@ -2486,7 +2735,7 @@
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
-      await speakReply(r.utterance, r.audioFile);
+      await speakReply(r.segments);
       node.classList.remove("speaking");
       renderAll();
     } finally {
@@ -2566,7 +2815,7 @@
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
-      await speakReply(r.utterance, r.audioFile);
+      await speakReply(r.segments);
       node.classList.remove("speaking");
       setMicNote("\u300C\u{1F3A4} \u8A71\u3059\u300D\u3092\u62BC\u3057\u3066\u8A71\u3057\u304B\u3051\u3066\u304F\u3060\u3055\u3044\u3002");
     } finally {

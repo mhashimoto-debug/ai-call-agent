@@ -10,13 +10,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  CURRENT_NUMBER_LABEL,
-  DialogEngine,
-  VOICE_LINES,
-  AUDIO_BASE,
-  type DialogReply,
-} from "./dialogEngine.js";
+import { CURRENT_NUMBER_LABEL, DialogEngine, type DialogReply } from "./dialogEngine.js";
+import { AUDIO_BASE, VOICE_LINES, audioFiles, type SpeechSegment } from "./voiceLines.js";
 import { TransferEngine, type TransferReply } from "./transferEngine.js";
 import { createCallState, type CallState } from "../domain/state.js";
 import { evaluateDod } from "../domain/dod.js";
@@ -24,13 +19,14 @@ import { evaluateDod } from "../domain/dod.js";
 const AUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../public/audio");
 
 /** 応答が参照している録音が、配信物（public/audio/）に実在すること。 */
-function assertAudioExists(audioFile: string | undefined, label: string): void {
-  if (!audioFile) return;
-  assert.ok(audioFile.startsWith(AUDIO_BASE), `${label}: 録音のパスが想定外: ${audioFile}`);
-  assert.ok(
-    fs.existsSync(path.join(AUDIO_DIR, path.basename(audioFile))),
-    `${label}: 録音ファイルが存在しない: ${audioFile}`,
-  );
+function assertAudioExists(segments: readonly SpeechSegment[], label: string): void {
+  for (const audioFile of audioFiles(segments)) {
+    assert.ok(audioFile.startsWith(AUDIO_BASE), `${label}: 録音のパスが想定外: ${audioFile}`);
+    assert.ok(
+      fs.existsSync(path.join(AUDIO_DIR, path.basename(audioFile))),
+      `${label}: 録音ファイルが存在しない: ${audioFile}`,
+    );
+  }
 }
 
 // ============================================================
@@ -58,7 +54,12 @@ class CallA {
 function assertHealthyA(call: CallA, label: string): void {
   call.replies.forEach((r, i) => {
     assert.ok(r.utterance.length > 0, `${label}: ${i}ターン目の発話が空`);
-    assertAudioExists(r.audioFile, `${label}: ${i}ターン目`);
+    assertAudioExists(r.segments, `${label}: ${i}ターン目`);
+    assert.equal(
+      r.segments.map((s) => s.text).join(""),
+      r.utterance,
+      `${label}: ${i}ターン目で再生する区間と表示テキストが食い違う`,
+    );
     if (i === 0) return;
     assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `${label}: ${i}ターン目で冒頭の挨拶に巻き戻っている`);
     assert.doesNotMatch(r.matched, /判定できず|読み取れず/, `${label}: ${i}ターン目で判定に失敗（${r.matched}）`);
@@ -141,7 +142,7 @@ for (const text of ["担当者のお名前はお分かりでしょうか", "担�
 
     const overview = call.say("では社長に代わりますね");
     assert.equal(overview.utterance, VOICE_LINES.overview.text, `取次ぎ後に概要へ進まない: ${overview.matched}`);
-    assert.equal(overview.audioFile, `${AUDIO_BASE}p1_overview.mp3`);
+    assert.deepEqual(audioFiles(overview.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
     assert.equal(call.say("はい、社長の中村です").utterance, VOICE_LINES.hearingAgeCount.text);
     assertHealthyA(call, `担当名ガード「${text}」`);
   });
@@ -228,7 +229,7 @@ for (const text of SELF_IDENTIFY_PHRASES) {
     const call = new CallA();
     const r = call.say(text);
     assert.equal(r.utterance, VOICE_LINES.overview.text, `概要説明へ進んでいない: ${r.matched}`);
-    assert.equal(r.audioFile, `${AUDIO_BASE}p1_overview.mp3`);
+    assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
     assert.equal(r.phase, "P1");
     assert.match(r.matched, /本人が応答/);
     assertHealthyA(call, `本人応答「${text}」`);
@@ -280,7 +281,7 @@ test("デモA 断り: 1回目は別枠の制度であることを伝え、2回�
   assert.equal(call.say("うちはもう対策してるので").utterance, VOICE_LINES.r5OtherScheme.text);
   const closed = call.say("いや、間に合ってます");
   assert.equal(closed.utterance, VOICE_LINES.reject.text);
-  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.deepEqual(audioFiles(closed.segments), [`${AUDIO_BASE}reject_closing.mp3`]);
   assert.equal(call.state.ended, true);
 });
 
@@ -426,7 +427,7 @@ class CallB {
   say(text: string): TransferReply {
     const r = this.engine.respond(text);
     this.replies.push(r);
-    assertAudioExists(r.audioFile, `タイプB「${text}」`);
+    assertAudioExists(r.segments, `タイプB「${text}」`);
     return r;
   }
 }
@@ -436,7 +437,7 @@ function assertHandover(call: CallB, r: TransferReply, label: string): void {
   assert.equal(r.handover, true, `${label}: 引き継ぎになっていない（${r.matched}）`);
   assert.equal(r.outcome, "handover");
   assert.equal(r.utterance, "", `${label}: 引き継ぎ時に AI が発話している`);
-  assert.equal(r.audioFile, undefined, `${label}: 引き継ぎ時に音声を再生しようとしている`);
+  assert.deepEqual(r.segments, [], `${label}: 引き継ぎ時に音声を再生しようとしている`);
   assert.equal(call.engine.finished, true);
 }
 
@@ -445,7 +446,7 @@ function assertHandover(call: CallB, r: TransferReply, label: string): void {
 for (const text of ["少々お待ちください", "担当に代わります", "お電話代わりました", "代表の中村です"]) {
   test(`デモB 正常突破: 「${text}」で人間へ引き継ぐ`, () => {
     const call = new CallB();
-    assert.equal(call.replies[0]?.audioFile, `${AUDIO_BASE}p0_greeting.mp3`);
+    assert.deepEqual(audioFiles(call.replies[0]?.segments ?? []), [`${AUDIO_BASE}p0_greeting.mp3`]);
     assertHandover(call, call.say(text), `正常突破「${text}」`);
   });
 }
@@ -517,7 +518,7 @@ test("デモB 不在: 戻り時間を記録して引き延ばさず終話する"
   const r = call.say(text);
   assert.equal(r.outcome, "absent");
   assert.equal(r.utterance, VOICE_LINES.reject.text);
-  assert.equal(r.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}reject_closing.mp3`]);
   assert.deepEqual(call.engine.absenceRecord, { said: text, returnTime: "夕方" });
 });
 

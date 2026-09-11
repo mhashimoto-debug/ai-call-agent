@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { scoreVoice, speechText, splitForSpeech } from "./speech.js";
+import {
+  playbackRuns,
+  playSegments,
+  scoreVoice,
+  speechText,
+  splitForSpeech,
+  type SegmentPlayer,
+} from "./speech.js";
 
 const voice = (name: string, localService = true, isDefault = false) =>
   ({ name, lang: "ja-JP", localService, default: isDefault }) as SpeechSynthesisVoice;
@@ -94,4 +101,104 @@ test("メールの読み下しでは区切りの空白を残す", () => {
 
 test("曜日の直後に時刻が続くときは読点で区切る", () => {
   assert.match(speechText("9月17日（水）14時から30分でいかがでしょうか？"), /水曜日、14時/);
+});
+
+// ---------- 区間の連続再生 ----------
+
+/** 呼ばれた順を記録する再生器。missing に入れた録音は鳴らせなかったことにする。 */
+function recorder(missing: string[] = []) {
+  const log: string[] = [];
+  const player: SegmentPlayer<string> = {
+    load: (url) => {
+      log.push(`load ${url}`);
+      return url;
+    },
+    play: async (url) => {
+      log.push(`play ${url}`);
+      return !missing.includes(url);
+    },
+    speak: async (text) => {
+      log.push(`speak ${text}`);
+    },
+  };
+  return { log, player };
+}
+
+const running = { cancelled: false };
+
+test("複数の録音は先にまとめて読み込んでから、順に続けて鳴らす", async () => {
+  const { log, player } = recorder();
+  await playSegments(
+    [
+      { text: "恐れ入ります、もう一度お伺いできますでしょうか。", audioFile: "p8_reask_1.mp3" },
+      { text: "メールアドレスを伺えますでしょうか？", audioFile: "p8_email.mp3" },
+    ],
+    player,
+    running,
+  );
+  assert.deepEqual(log, ["load p8_reask_1.mp3", "load p8_email.mp3", "play p8_reask_1.mp3", "play p8_email.mp3"]);
+});
+
+test("差し込みの区間だけ読み上げ、前後の固定文は録音で鳴らす", async () => {
+  const { log, player } = recorder();
+  await playSegments(
+    [
+      { text: "復唱させていただきます。", audioFile: "pre.mp3" },
+      { text: "info@example.co.jp " },
+      { text: "でお間違いないでしょうか？", audioFile: "post.mp3" },
+    ],
+    player,
+    running,
+  );
+  assert.deepEqual(log, [
+    "load pre.mp3",
+    "load post.mp3",
+    "play pre.mp3",
+    "speak info@example.co.jp ",
+    "play post.mp3",
+  ]);
+});
+
+test("録音を鳴らせなかった区間だけ、その区間のテキストを読み上げて補う", async () => {
+  const { log, player } = recorder(["b.mp3"]);
+  await playSegments(
+    [
+      { text: "一文目。", audioFile: "a.mp3" },
+      { text: "二文目。", audioFile: "b.mp3" },
+    ],
+    player,
+    running,
+  );
+  assert.deepEqual(log, ["load a.mp3", "load b.mp3", "play a.mp3", "play b.mp3", "speak 二文目。"]);
+});
+
+test("録音の無い区間が続くときは1回の読み上げにまとめる", () => {
+  assert.deepEqual(
+    playbackRuns([
+      { text: "A。", audioFile: "a.mp3" },
+      { text: "B" },
+      { text: "C。" },
+      { text: "D。", audioFile: "d.mp3" },
+    ]),
+    [{ text: "A。", audioFile: "a.mp3" }, { text: "BC。" }, { text: "D。", audioFile: "d.mp3" }],
+  );
+});
+
+test("停止されたら残りの区間は鳴らさず、読み上げでも補わない", async () => {
+  const token = { cancelled: false };
+  const { log, player } = recorder();
+  player.play = async (url) => {
+    log.push(`play ${url}`);
+    token.cancelled = true; // 1本目の再生中に停止された
+    return false;
+  };
+  await playSegments(
+    [
+      { text: "一文目。", audioFile: "a.mp3" },
+      { text: "二文目。", audioFile: "b.mp3" },
+    ],
+    player,
+    token,
+  );
+  assert.deepEqual(log, ["load a.mp3", "load b.mp3", "play a.mp3"]);
 });

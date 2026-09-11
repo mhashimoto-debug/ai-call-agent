@@ -18,12 +18,19 @@ import {
   SELF_IDENTIFIED,
   REFUSE_SALES,
   RETURN_TIME,
-  VOICE_LINES,
-  audioUrl,
-  type VoiceLineId,
 } from "./dialogEngine.js";
+import {
+  PHRASES,
+  VOICE_LINES,
+  clip,
+  filterSegment,
+  type PhraseId,
+  type SpeechSegment,
+  type VoiceLine,
+  type VoiceLineId,
+} from "./voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
-import { autoFix, checkForbidden, type Violation } from "../domain/forbidden.js";
+import { checkForbidden, type Violation } from "../domain/forbidden.js";
 import type { GuardrailId } from "../domain/types.js";
 
 /** 架電エージェントの動作モード。 */
@@ -40,7 +47,8 @@ export type TransferOutcome = "calling" | "handover" | "absent" | "rejected";
 export interface TransferReply {
   /** AI の発話。引き継ぎ時は空（人間に渡すため AI は喋らない）。 */
   utterance: string;
-  audioFile?: string;
+  /** 再生する区間（録音 or 音声合成）。引き継ぎ時は空。 */
+  segments: SpeechSegment[];
   /** どのルールで分岐したか（画面に出して「なぜこう返したか」を見せる） */
   matched: string;
   outcome: TransferOutcome;
@@ -160,6 +168,7 @@ export class TransferEngine {
       this.outcome = "handover";
       return {
         utterance: "",
+        segments: [],
         matched: "担当者接続を検知 → オペレーターへ引き継ぎ（AI の発話を停止）",
         outcome: "handover",
         handover: true,
@@ -175,12 +184,12 @@ export class TransferEngine {
         // 名前を尋ねられている場合は「名前では答えられない」ことを先に伝える
         return isContactNameAsked(text)
           ? this.speak(
-              "失礼いたしました！特定のお名前ではなく、人事・総務のご担当者様か代表者様にお繋ぎいただけますでしょうか？",
+              "transferContactName",
               "担当者名の確認 → 部署・役職を指定して取次ぎを再依頼",
               fired,
             )
           : this.speak(
-              "失礼いたしました！総務や人事のご担当者様、あるいは代表者様（社長様）にお繋ぎいただけますでしょうか？",
+              "transferContactDepartment",
               "担当不明 → 総務・人事・代表者を挙げて取次ぎを再依頼",
               fired,
             );
@@ -198,7 +207,7 @@ export class TransferEngine {
       }
       if (this.purposeAsks === 2) {
         return this.speak(
-          "はい、御社の現在の制度導入状況についての簡単な確認でございます。恐れ入りますが、ご担当者様にお繋ぎいただけますでしょうか？",
+          "transferPurposeFollowup",
           "用件を重ねて問われた → 内容を一言で示して取次ぎを再依頼",
           fired,
         );
@@ -216,31 +225,26 @@ export class TransferEngine {
     return this.say("greeting", "取次ぎに至らず → 依頼を言い直す", fired);
   }
 
-  /** 収録の無い応答（具体的な部署の提示など）。音声合成で読み上げる。 */
-  private speak(raw: string, matched: string, fired: GuardrailId[] = []): TransferReply {
-    return {
-      utterance: autoFix(raw).text,
-      matched,
-      outcome: this.outcome,
-      handover: false,
-      guardrails: fired,
-      blocked: checkForbidden(raw).filter((v) => v.fixable),
-    };
+  /** 主台本以外の応答（具体的な部署の提示など）。 */
+  private speak(id: PhraseId, matched: string, fired: GuardrailId[] = []): TransferReply {
+    return this.reply(PHRASES[id], matched, fired);
   }
 
   private say(id: VoiceLineId, matched: string, fired: GuardrailId[] = []): TransferReply {
-    const line = VOICE_LINES[id];
+    return this.reply(VOICE_LINES[id], matched, fired);
+  }
+
+  private reply(line: VoiceLine, matched: string, fired: GuardrailId[]): TransferReply {
     // 出力前フィルタ（設計書 §6）はこのモードでも必ず通す
-    const utterance = autoFix(line.text).text;
-    const blocked = checkForbidden(line.text).filter((v) => v.fixable);
+    const segment = filterSegment(clip(line));
     return {
-      utterance,
-      audioFile: audioUrl(line.file),
+      utterance: segment.text,
+      segments: [segment],
       matched,
       outcome: this.outcome,
       handover: false,
       guardrails: fired,
-      blocked,
+      blocked: checkForbidden(line.text).filter((v) => v.fixable),
     };
   }
 }

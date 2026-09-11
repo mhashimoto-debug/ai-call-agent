@@ -9,12 +9,10 @@
  * したがって「7項目が揃うまで P9 へ進めない」「R1 発火中は終話しない」等の
  * 担保は、自由発話でもそのまま効く。
  *
- * 応答には対応する録音（public/audio/*.mp3）のパスを紐付けて返す。
- * 画面側はこれがあれば TTS ではなく録音を優先再生する（詳細は AUDIO_BASE 付近のコメント）。
+ * 応答は区間（録音 or 音声合成）の並びで返す。台本と録音の対応は voiceLines.ts にまとめてある。
  */
 import { PHASES } from "../domain/phases.js";
 import { GUARDRAILS, detectGuardrails } from "../domain/guardrails.js";
-import { HEARING_SLOT_MAP } from "../domain/hearing.js";
 import {
   applyExtracted,
   missingHearing,
@@ -22,9 +20,19 @@ import {
   type CallState,
   type ExtractedFacts,
 } from "../domain/state.js";
-import { autoFix, checkForbidden, type Violation } from "../domain/forbidden.js";
+import { checkForbidden, type Violation } from "../domain/forbidden.js";
 import type { GuardrailId, HearingId, PhaseId } from "../domain/types.js";
 import { DEMO_SCENARIO } from "./scenario.js";
+import {
+  PHRASES,
+  VOICE_LINES,
+  clip,
+  filterSegment,
+  tts,
+  type PhraseId,
+  type SpeechSegment,
+  type VoiceLineId,
+} from "./voiceLines.js";
 
 export interface DialogReply {
   utterance: string;
@@ -36,98 +44,11 @@ export interface DialogReply {
   /** 出力前フィルタで遮断した違反 */
   blocked: Violation[];
   /**
-   * この応答に対応する録音のパス（例: "public/audio/p1_overview.mp3"）。
-   * 定型のスクリプト発話にのみ付き、その場で組み立てる質問文には付かない。
+   * 再生する区間の並び。区間ごとに録音があれば MP3、無ければ音声合成で鳴らす。
+   * 区間のテキストをつなげると utterance と一致する。
    */
-  audioFile?: string;
+  segments: SpeechSegment[];
 }
-
-// ---------- 収録台本（Vrew 台本 = 画面表示テキスト = 音声） ----------
-
-/**
- * 録音の置き場所。ページからの相対パスにしてあるので、
- * ローカルの静的サーバでも GitHub Pages（/<repo>/ 配下）でも同じ指定で解決できる。
- */
-export const AUDIO_BASE = "public/audio/";
-
-export interface VoiceLine {
-  /** public/audio/ 内のファイル名 */
-  readonly file: string;
-  /** 収録した読み上げ内容そのもの */
-  readonly text: string;
-}
-
-/**
- * Vrew に入力した最新台本。
- *
- * 画面に出す文字列と再生する音声を必ずこの1箇所から取り出すことで、
- * 「表示テキストと音声が食い違う」ことが構造的に起きないようにしている。
- * 台本を直すときはここだけを直す（対応する MP3 の録り直しも必要）。
- */
-export const VOICE_LINES = {
-  greeting: {
-    file: "p0_greeting.mp3",
-    text: "お世話になっております。私、企業型確定拠出年金相談センターと申します。2026年12月の法改正の件で、ご担当者様にお繋ぎいただけますでしょうか？",
-  },
-  overview: {
-    file: "p1_overview.mp3",
-    text: "あ、ありがとうございます！実は今回の法改正により、企業型DCの導入要件が大幅に緩和され、事業主様の節税効果や優秀な人材確保に向けたメリットが非常に大きくなっております。御社でのご活用状況について確認でお電話させていただきました。",
-  },
-  hearingAgeCount: {
-    file: "p2_p3_hearing.mp3",
-    text: "ご回答ありがとうございます！現在御社で対象となる方の主な年齢層と、役員様・従業員様を合わせた全体の人数はおおよそ何名様になりますでしょうか？",
-  },
-  hearingFiscalEmail: {
-    file: "p4_p5_hearin.mp3",
-    text: "ご教示ありがとうございます！最新のシミュレーション資料をお送りしたいのですが、御社の決算月と、送付先のメールアドレスをお伺いできますでしょうか？",
-  },
-  schedule: {
-    file: "p7_schedule.mp3",
-    text: "ありがとうございます！ご状況に合わせた最適な活用案について、弊社専門スタッフより15分ほどオンラインでご案内できればと存じます。例えば、来週の水曜日14時頃のご都合はいかがでしょうか？",
-  },
-  reschedule: {
-    file: "reschedule.mp3",
-    text: "失礼いたしました！それでは、別の日時として木曜日の15時頃はいかがでしょうか？",
-  },
-  contact: {
-    file: "p8_recovery.mp3",
-    text: "ご教示いただき誠にありがとうございます！確認のため、ご担当者様の直通のお電話番号、またはメールアドレスをお伺いしてもよろしいでしょうか？",
-  },
-  closing: {
-    file: "p9_closing.mp3",
-    text: "お時間をいただき誠にありがとうございます！それではご指定の日時に、お伺いいたしましたメールアドレスへオンライン会議のURLをお送りいたします。当日はどうぞよろしくお願いいたします。失礼いたします。",
-  },
-  reject: {
-    file: "reject_closing.mp3",
-    text: "承知いたしました。貴重なお時間をいただき誠にありがとうございました。それでは失礼いたします。",
-  },
-  r1NoSystem: {
-    file: "r1_no_system.mp3",
-    text: "あ、失礼いたしました！実は今回の法改正は、まだ導入されていない企業様ほど節税やコスト削減のメリットが大きい内容となっております。差し支えなければ、御社の現在の従業員数だけお伺いできますでしょうか？",
-  },
-  r2Busy: {
-    file: "r2_busy.mp3",
-    text: "あ、大変失礼いたしました！お忙しい時間帯にお電話してしまいましたよね。本当に30秒だけ要点をお伝えして、すぐにお電話切らせていただきますね。実は今回の法改正で企業型DCの導入要件が大きく変わり、会社側の節税メリットが非常に大きくなったため確認でお電話いたしました。差し支えなければ、御社の現在の従業員数だけお伺いできますでしょうか？",
-  },
-  r3Expert: {
-    file: "r3_expert.mp3",
-    text: "あ、すでに信頼できる専門家様がいらっしゃるのですね！素晴らしいです。ただ、今回の企業型DC法改正は社労士様や税理士様でも見落とされやすい専門領域となっております。セカンドオピニオンとして情報確認だけでもいかがでしょうか？",
-  },
-  r4Document: {
-    file: "r4_document.mp3",
-    text: "承知いたしました！ご検討いただきありがとうございます。お送りする資料に相違がないよう、差し支えなければ送付先のメールアドレスをお伺いできますでしょうか？",
-  },
-  r5OtherScheme: {
-    file: "r5_misunderstanding.mp3",
-    text: "あ、ご認識ありがとうございます！実はiDeCoや個人の年金ではなく、会社側の社会保険料や税金も軽減できる企業型の制度についての法改正となっております。",
-  },
-  r7Absent: {
-    file: "r7_absent.mp3",
-    text: "承知いたしました。お戻りの際にご案内資料をお渡しできればと存じますので、恐れ入りますがご担当者様のメールアドレスか、ご直通のお電話番号をお伺いしてもよろしいでしょうか？",
-  },
-} as const satisfies Record<string, VoiceLine>;
-
-export type VoiceLineId = keyof typeof VOICE_LINES;
 
 /** 言い直しの対象にしない台本（言い切って終わるもの）。 */
 const CLOSING_LINES = new Set<VoiceLineId>(["reject", "closing"]);
@@ -135,22 +56,22 @@ const CLOSING_LINES = new Set<VoiceLineId>(["reject", "closing"]);
 /**
  * 短い聞き返し。
  * 直前に流したばかりの台本をもう一度そのまま流すと、長い説明が2回続いて不自然になる。
- * その場合はここから、同じことを一言で聞き直す（録音は無いので音声合成）。
+ * その場合はここから、同じことを一言で聞き直す（文言は PHRASES.recap*）。
  */
-const RECAP: Partial<Record<VoiceLineId, string>> = {
-  greeting: "恐れ入ります、2026年12月の法改正の件で、ご担当者様にお繋ぎいただけますでしょうか？",
-  overview: "恐れ入ります、御社では役員様の退職金のご準備は何かされていますでしょうか？",
-  hearingAgeCount: "恐れ入ります、役員様と従業員様を合わせて、おおよそ何名様でいらっしゃいますか？",
-  hearingFiscalEmail: "恐れ入ります、御社の決算月はいつになりますでしょうか？",
-  schedule: "恐れ入ります、来週の水曜日14時頃でしたら、ご都合いかがでしょうか？",
-  reschedule: "恐れ入ります、木曜日の15時頃でしたら、ご都合いかがでしょうか？",
-  contact: "恐れ入ります、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？",
-  r1NoSystem: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
-  r2Busy: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
-  r3Expert: "恐れ入ります、セカンドオピニオンとして情報のご確認だけでもいかがでしょうか？",
-  r4Document: "恐れ入ります、送付先のメールアドレスを伺えますでしょうか？",
-  r5OtherScheme: "恐れ入ります、御社の現在の従業員数だけ伺えますでしょうか？",
-  r7Absent: "恐れ入ります、何時頃でしたらお戻りになりますでしょうか？",
+const RECAP: Partial<Record<VoiceLineId, PhraseId>> = {
+  greeting: "recapGreeting",
+  overview: "recapOverview",
+  hearingAgeCount: "recapHearingAgeCount",
+  hearingFiscalEmail: "recapHearingFiscalEmail",
+  schedule: "recapSchedule",
+  reschedule: "recapReschedule",
+  contact: "recapContact",
+  r1NoSystem: "recapHeadcount",
+  r2Busy: "recapHeadcount",
+  r3Expert: "recapExpert",
+  r4Document: "recapDocument",
+  r5OtherScheme: "recapHeadcount",
+  r7Absent: "recapAbsent",
 };
 
 /**
@@ -182,8 +103,6 @@ export const GUARDRAIL_LINE: Record<Exclude<GuardrailId, "R5">, VoiceLineId> = {
   R4: "r4Document",
   R7: "r7Absent",
 };
-
-export const audioUrl = (file: string): string => `${AUDIO_BASE}${file}`;
 
 // ---------- 判定辞書 ----------
 // 実際の架電で出る言い回しに合わせて広めに取る。
@@ -361,7 +280,7 @@ const TIME_SLOT =
 
 /**
  * R5 のうち「公的機関との誤認」だけを切り分ける。
- * こちらは収録が無く、立場の切り分け（民間の導入支援事業者）を必ず読み上げる必要がある。
+ * こちらは他制度用の録音では答えにならず、立場の切り分け（民間の導入支援事業者）を必ず伝える必要がある。
  */
 const PUBLIC_BODY_CONFUSION =
   /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省|年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労働基準監督署|公務員|職員|担当官|補助金|助成金|給付金)/;
@@ -474,15 +393,8 @@ const AGE_ERA = /(\d{2})\s*代/;
 /** 文脈語のない人数（「20人くらいです」）。その場面で人数を聞いているときだけ使う。 */
 const BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
 
-/**
- * 聞き取れなかったときの前置き。
- * 同じ質問を一字一句同じ言い方で繰り返すと機械的に聞こえるため、聞き直すたびに変える。
- */
-const REASK_PREFIX = [
-  "恐れ入ります、もう一度お伺いできますでしょうか。",
-  "お手数をおかけいたします。",
-  "念のため確認させてください。",
-];
+/** 聞き取れなかったときの前置き。聞き直すたびに変える（文言は PHRASES.reask*）。 */
+const REASK_PREFIX: PhraseId[] = ["reask1", "reask2", "reask3"];
 
 /**
  * 年齢層・人数をこちらから聞く前の段階。ここでは人数の言いっぱなしも拾う。
@@ -492,6 +404,23 @@ const EARLY_PHASES = new Set<PhaseId>(["P0", "P1"]);
 
 /** P8 で今どのスロットを聞いているか。 */
 type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow";
+
+/** P8 の各項目を尋ねる発話。メールアドレスの復唱だけはアドレスを差し込むので askParts で組み立てる。 */
+const SLOT_QUESTION: Record<Exclude<PendingSlot, "emailConfirm">, PhraseId> = {
+  H1: "askH1",
+  H2: "askH2",
+  H3: "askH3",
+  H4: "askH4",
+  H5: "askH5",
+  H6: "askH6",
+  H7: "askH7",
+  email: "askEmail",
+  callbackPhone: "askCallbackPhone",
+  callbackWindow: "askCallbackWindow",
+};
+
+/** 発話の部品。PHRASES の短い発話か、差し込み（メールアドレス・時刻など）の区間。 */
+type Part = PhraseId | SpeechSegment;
 
 /** ガードレールの切り返しで相手に投げた質問。次の発話をその文脈で読む。 */
 type Expecting = "headcount" | "contact" | null;
@@ -644,14 +573,9 @@ export class DialogEngine {
       case "P8":
         return this.p8(text, fired);
       case "P9":
-        return this.speakOnly(
-          "本日はお時間をいただきありがとうございました。失礼いたします。",
-          "END",
-          fired,
-          "締め完了",
-        );
+        return this.speakPhrases(["endThanks"], "END", fired, "締め完了");
       default:
-        return this.speakOnly("ありがとうございました。失礼いたします。", "END", fired, "終話");
+        return this.speakPhrases(["endShort"], "END", fired, "終話");
     }
   }
 
@@ -710,16 +634,16 @@ export class DialogEngine {
     const has = (id: GuardrailId): boolean => fired.includes(id);
 
     // R5: 誤認は最優先で解く。
-    // 公的機関との誤認だけは収録が無いので、立場の切り分けを読み上げで必ず行う。
+    // 公的機関との誤認は他制度用の録音（r5_misunderstanding）とは別の一言で、立場の切り分けを必ず行う。
     if (has("R5")) {
       this.unknownStreak = 0;
       if (PUBLIC_BODY_CONFUSION.test(text) && !this.publicBodyCorrected) {
         this.publicBodyCorrected = true;
-        return this.speakOnly(
-          "紛らわしくて申し訳ございません。制度は厚生労働省の管轄ですが、私どもは民間の導入支援事業者でございます。",
+        return this.speakPhrases(
+          ["r5PublicBody"],
           this.state.phase,
           fired,
-          "R5: 公的機関との誤認を即座に訂正（録音なし・音声合成）",
+          "R5: 公的機関との誤認を即座に訂正",
         );
       }
       const reply = this.guardrailReply(
@@ -905,10 +829,8 @@ export class DialogEngine {
     if (got.length === 0 && EMAIL_UNAVAILABLE.test(text) && !this.postalOffered) {
       this.postalOffered = true;
       this.unknownStreak = 0;
-      return this.speakOnly(
-        this.state.hearing.H7
-          ? "承知いたしました。それでは資料は郵送でお送りいたします。"
-          : "承知いたしました。それでは、御社の決算月だけ伺えますでしょうか？資料は郵送でもお送りできます。",
+      return this.speakPhrases(
+        [this.state.hearing.H7 ? "postal" : "postalFiscal"],
         this.state.phase,
         fired,
         "メールが使えない → 郵送に切り替えて決算月のみ確認",
@@ -935,8 +857,8 @@ export class DialogEngine {
       /(何|なに|わからない|分からない|使えない|できない|詳しくない|苦手|不安|やったこと)/.test(text)
     ) {
       this.unknownStreak = 0;
-      return this.speakOnly(
-        "スマートフォンでも参加できます。メールでお送りするURLをタップいただくだけですので、難しい操作はございません。",
+      return this.speakPhrases(
+        ["onlineHowto"],
         "P7",
         fired,
         "条件分岐: オンライン商談の説明",
@@ -945,8 +867,8 @@ export class DialogEngine {
     // 「そちらは遠い」という誤解も、移動不要であることだけ伝える
     if (/(遠い|距離|来られ|お越し|伺うの)/.test(text)) {
       this.unknownStreak = 0;
-      return this.speakOnly(
-        "オンラインですので、ご移動やご来社は不要でございます。",
+      return this.speakPhrases(
+        ["noTravel"],
         "P7",
         fired,
         "条件分岐: オンラインなので移動は不要",
@@ -999,9 +921,9 @@ export class DialogEngine {
           // 前置きを変えて、同じ言い回しが続かないようにする
           const attempt = this.reasked.get(this.pending) ?? 0;
           this.reasked.set(this.pending, attempt + 1);
-          const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "";
-          return this.speakOnly(
-            `${prefix}${this.askText(this.pending)}`,
+          const prefix = REASK_PREFIX[attempt % REASK_PREFIX.length] ?? "reask1";
+          return this.speakPhrases(
+            [prefix, ...this.askParts(this.pending)],
             "P8",
             fired,
             `${this.pending} が聞き取れず再質問`,
@@ -1018,7 +940,8 @@ export class DialogEngine {
    * lead は次の質問の前に添える一言（「こちらの番号宛にご連絡します」など）。
    * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
    */
-  private advanceP8(notes: string[], fired: GuardrailId[], lead = ""): DialogReply {
+  private advanceP8(notes: string[], fired: GuardrailId[], lead?: PhraseId): DialogReply {
+    const leadParts: Part[] = lead ? [lead] : [];
     const nextSlot = this.nextSlot();
     if (!nextSlot) {
       this.pending = null;
@@ -1026,12 +949,11 @@ export class DialogEngine {
       // 実データで53%しか実施されていない項目で、このデモの主張そのものなので、
       // 録音が無くても必ず1回入れる（DoD の「カレンダー登録を依頼した」を満たす）。
       if (!this.state.calendarRequested) {
-        const sc = DEMO_SCENARIO;
-        return this.speakOnly(
-          `${lead}担当の予定の兼ね合いで、もし日程変更になりますと次回のご案内がかなり先になる可能性がございます。お手数ですが${sc.proposedDate}${sc.proposedTime}で、一旦カレンダーにご予定だけ入れておいていただけますと助かります。`,
+        return this.speakPhrases(
+          [...leadParts, "calendarRequest"],
           "P8",
           fired,
-          `${notes.join(" / ") || "取得完了"} → カレンダー登録依頼（録音なし・音声合成）`,
+          `${notes.join(" / ") || "取得完了"} → カレンダー登録依頼`,
         );
       }
       return this.say(
@@ -1042,12 +964,11 @@ export class DialogEngine {
       );
     }
     this.pending = nextSlot;
-    // 収録台本に無い項目は音声合成で補う（画面にもそう出す）
-    return this.speakOnly(
-      `${lead}${this.askText(nextSlot)}`,
+    return this.speakPhrases(
+      [...leadParts, ...this.askParts(nextSlot)],
       "P8",
       fired,
-      `${notes.length > 0 ? notes.join(" / ") + " → " : ""}次は ${nextSlot}（録音なし・音声合成）`,
+      `${notes.length > 0 ? notes.join(" / ") + " → " : ""}次は ${nextSlot}`,
     );
   }
 
@@ -1068,18 +989,17 @@ export class DialogEngine {
     // 不在対応中は、戻り時間の確認と折り返しの約束へそのまま進める
     if (this.absentMode) return this.absentFollowUp(text, fired);
 
-    const ack = "承知いたしました！ではこちらの番号宛にご連絡を差し上げますね。";
     const note = "発信番号の指定 → この番号で連絡先を確定";
     if (!this.state.email) {
       this.pending = "email";
-      return this.speakOnly(
-        `${ack}差し支えなければ送付先のメールアドレスもお伺いできますでしょうか？`,
+      return this.speakPhrases(
+        ["currentNumberAck", "currentNumberEmail"],
         "P8",
         fired,
-        `${note} → 送付先メールアドレスへ（録音なし・音声合成）`,
+        `${note} → 送付先メールアドレスへ`,
       );
     }
-    return this.advanceP8([note], fired, ack);
+    return this.advanceP8([note], fired, "currentNumberAck");
   }
 
   /** そのスロットがすでに埋まっているか。 */
@@ -1108,19 +1028,12 @@ export class DialogEngine {
     return null;
   }
 
-  private askText(slot: PendingSlot): string {
-    switch (slot) {
-      case "email":
-        return "資料とオンライン会議のURLをお送りしたいのですが、メールアドレスを伺えますでしょうか？";
-      case "emailConfirm":
-        return `復唱させていただきます。${this.state.email} でお間違いないでしょうか？`;
-      case "callbackPhone":
-        return "前日に確認のご連絡を差し上げたいのですが、お電話番号を伺えますでしょうか？";
-      case "callbackWindow":
-        return "前日のご連絡は、何時頃が繋がりやすいでしょうか？";
-      default:
-        return (HEARING_SLOT_MAP.get(slot)?.question ?? "").replace(/（[^）]*）\s*$/, "");
+  /** その項目を尋ねる発話。メールアドレスの復唱は、取得したアドレスだけを音声合成で差し込む。 */
+  private askParts(slot: PendingSlot): Part[] {
+    if (slot === "emailConfirm") {
+      return ["emailConfirmPre", tts(`${this.state.email} `), "emailConfirmPost"];
     }
+    return [SLOT_QUESTION[slot]];
   }
 
   /** 「今どの項目を聞いているか」が分かっているので、その文脈で回答を解釈する。 */
@@ -1209,8 +1122,8 @@ export class DialogEngine {
     const window = this.state.callbackWindow;
 
     if (window && hasContact) {
-      return this.speakOnly(
-        `ありがとうございます。それでは${window}頃に改めてお電話いたします。お忙しいところ失礼いたしました。`,
+      return this.speakPhrases(
+        ["r7Thanks", tts(`${window}頃に`), "r7CallbackClosing"],
         this.toPhase("P0X"),
         fired,
         "不在: 戻り時間と折り返し先を確保 → 折り返しを約束して終話",
@@ -1221,8 +1134,8 @@ export class DialogEngine {
     const askedContact = this.absentAsked.has("contact");
     if (!window && !askedWindow) {
       this.absentAsked.add("window");
-      return this.speakOnly(
-        "恐れ入ります、何時頃でしたらお戻りになりますでしょうか。改めてこちらからお電話いたします。",
+      return this.speakPhrases(
+        ["r7AskReturnTime"],
         this.state.phase,
         fired,
         "不在: 戻り時間の確認",
@@ -1231,10 +1144,8 @@ export class DialogEngine {
     if (!hasContact && !askedContact) {
       this.absentAsked.add("contact");
       this.expecting = "contact";
-      return this.speakOnly(
-        window
-          ? `承知いたしました。${window}頃に改めてお電話いたします。念のため、ご担当者様のお電話番号かメールアドレスを伺えますでしょうか？`
-          : "恐れ入ります、ご担当者様のお電話番号かメールアドレスだけ伺えますでしょうか？",
+      return this.speakPhrases(
+        window ? ["r7Ack", tts(`${window}頃に`), "r7CallbackAskContact"] : ["r7AskContact"],
         this.state.phase,
         fired,
         "不在: 折り返し先の確認",
@@ -1265,8 +1176,8 @@ export class DialogEngine {
     if (this.contactUnknownAsks >= 2) {
       return this.say("reject", this.toPhase("P0X"), fired, "取次ぎ先が決まらず → 粘らず丁寧に終話");
     }
-    return this.speakOnly(
-      "恐れ入ります、特定の個人名ではなく、現在御社で人事・総務や福利厚生をご担当されている方、あるいは代表者様にお繋ぎいただけますでしょうか？",
+    return this.speakPhrases(
+      ["contactDepartment"],
       this.state.phase,
       fired,
       "担当者名の確認・取次ぎ先不明 → 部署と役職で取次ぎ先を示して再依頼",
@@ -1300,8 +1211,8 @@ export class DialogEngine {
     }
     this.refusalStreak++;
     this.meetingOfferedAt = this.state.turns.length;
-    return this.speakOnly(
-      `承知いたしました！では弊社にてサイトより確認させていただきますね。差し支えなければ、${DEMO_SCENARIO.contactTitle}様と一度${DEMO_SCENARIO.meetingMinutes}分ほどオンラインでご挨拶だけでもお時間いただけないでしょうか？`,
+    return this.speakPhrases(
+      ["hpReference"],
       this.toPhase("P7"),
       fired,
       "HP参照 → 送付先は聞かず、オンラインでの日程打診に切り替え",
@@ -1453,9 +1364,7 @@ export class DialogEngine {
     if (this.unknownStreak === 1 && anchor && !this.replayed.has(anchor)) {
       this.replayed.add(anchor);
       if (!this.justSaid(VOICE_LINES[anchor].text)) {
-        return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`, {
-          replay: true,
-        });
+        return this.say(anchor, this.state.phase, fired, `${reason} → 直前の質問を言い直す`);
       }
       // たった今流したばかりの台本は繰り返さず、同じ内容を一言で聞き直す
       const recap = this.recapReply(
@@ -1486,20 +1395,13 @@ export class DialogEngine {
   // ---------- 応答の確定（フィルタ・遷移検証・履歴） ----------
 
   /** 収録台本を1本読み上げる。画面表示テキストと音声は同じ定義から取る。 */
-  private say(
-    id: VoiceLineId,
-    proposed: PhaseId,
-    fired: GuardrailId[],
-    matched: string,
-    opts: { replay?: boolean } = {},
-  ): DialogReply {
-    const line = VOICE_LINES[id];
-    const alreadySaid = this.said.has(id);
+  private say(id: VoiceLineId, proposed: PhaseId, fired: GuardrailId[], matched: string): DialogReply {
     this.said.add(id);
     this.lastLine = id;
-    // 同じ録音は続けて流さない。ただし言い直しは同じ文言なので再生してよい。
-    const audioFile = !alreadySaid || opts.replay ? audioUrl(line.file) : undefined;
-    return this.emit(line.text, proposed, fired, matched, audioFile);
+    // 同じ通話で2回目に言う台本も録音で流す。
+    // 同じ文言を続けて流さない制御は分岐側（言い直し・要点だけの聞き直し）で行っている。
+    // ここで録音を外すと、同じ文言が合成音声で読まれて声だけが変わってしまう。
+    return this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
   }
 
   /**
@@ -1527,34 +1429,28 @@ export class DialogEngine {
     matched: string,
   ): DialogReply | null {
     const recap = RECAP[id];
-    if (!recap || this.recapped.has(id) || this.justSaid(recap)) return null;
+    if (!recap || this.recapped.has(id) || this.justSaid(PHRASES[recap].text)) return null;
     this.recapped.add(id);
-    return this.speakOnly(recap, proposed, fired, matched);
+    return this.speakPhrases([recap], proposed, fired, matched);
   }
 
-  /** 収録の無い発話（P8 の個別質問など）。音声合成で読み上げる。 */
-  private speakOnly(
-    raw: string,
-    proposed: PhaseId,
-    fired: GuardrailId[],
-    matched: string,
-  ): DialogReply {
-    // 収録台本ではないので、言い直しの基準（lastLine）は持ち越さない
+  /**
+   * 主台本以外の発話（P8 の個別質問・前置き・差し込みのある一言など）。
+   * 部品ごとに録音があれば MP3、無ければ音声合成で鳴らす。
+   */
+  private speakPhrases(parts: Part[], proposed: PhaseId, fired: GuardrailId[], matched: string): DialogReply {
+    // 主台本ではないので、言い直しの基準（lastLine）は持ち越さない
     this.lastLine = null;
-    return this.emit(raw, proposed, fired, matched, undefined);
+    const segments = parts.map((p) => (typeof p === "string" ? clip(PHRASES[p]) : p));
+    return this.emit(segments, proposed, fired, matched);
   }
 
-  private emit(
-    raw: string,
-    proposed: PhaseId,
-    fired: GuardrailId[],
-    matched: string,
-    audioFile: string | undefined,
-  ): DialogReply {
+  private emit(segments: SpeechSegment[], proposed: PhaseId, fired: GuardrailId[], matched: string): DialogReply {
     // 出力前フィルタ（設計書 §6）。定型文ベースでも必ず通す。
-    const fixed = autoFix(raw);
+    const raw = segments.map((s) => s.text).join("");
     const blocked = checkForbidden(raw).filter((v) => v.fixable);
-    const utterance = fixed.text;
+    const spoken = segments.map(filterSegment);
+    const utterance = spoken.map((s) => s.text).join("");
 
     applyExtracted(this.state, {
       calendar_requested: /カレンダー/.test(utterance),
@@ -1584,7 +1480,7 @@ export class DialogEngine {
       matched,
       overrideReason: t.overrideReason,
       blocked,
-      audioFile,
+      segments: spoken,
     };
   }
 

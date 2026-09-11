@@ -11,13 +11,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  AUDIO_BASE,
-  DialogEngine,
-  isContactGuard,
-  VOICE_LINES,
-  type DialogReply,
-} from "../../demo/dialogEngine.js";
+import { DialogEngine, isContactGuard, type DialogReply } from "../../demo/dialogEngine.js";
+import { AUDIO_BASE, VOICE_LINES, audioFiles } from "../../demo/voiceLines.js";
 import { createCallState, type CallState } from "../state.js";
 import { detectGuardrails } from "../guardrails.js";
 import type { PhaseId } from "../types.js";
@@ -588,7 +583,7 @@ test("HP参照: 2回続けて言われたら丁寧に終話する", () => {
   const closed = call.say("それもホームページに載ってます");
 
   assert.equal(closed.utterance, VOICE_LINES.reject.text, `終話していない: ${closed.matched}`);
-  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.deepEqual(audioFiles(closed.segments), [`${AUDIO_BASE}reject_closing.mp3`]);
   assert.equal(call.state.ended, true);
 });
 
@@ -763,7 +758,7 @@ for (const text of SELF_IDENTIFY_CASES) {
     const r = call.say(text);
 
     assert.equal(r.utterance, VOICE_LINES.overview.text, `概要説明へ進んでいない: ${r.matched}`);
-    assert.equal(r.audioFile, `${AUDIO_BASE}p1_overview.mp3`);
+    assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
     assert.equal(r.phase, "P1");
     // 挨拶のリピートや判定不能に落ちないこと
     assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `挨拶を繰り返している: ${r.matched}`);

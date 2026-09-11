@@ -7,7 +7,7 @@ import {
   TransferEngine,
   type TransferReply,
 } from "./transferEngine.js";
-import { VOICE_LINES } from "./dialogEngine.js";
+import { VOICE_LINES, audioFiles } from "./voiceLines.js";
 
 function fresh(): { engine: TransferEngine; first: TransferReply } {
   const engine = new TransferEngine();
@@ -45,7 +45,7 @@ for (const text of HANDOVER_CASES) {
     assert.equal(r.outcome, "handover");
     // 人間が話す前に AI の声が被らないよう、AI は何も喋らない
     assert.equal(r.utterance, "", "引き継ぎ時に AI が発話している");
-    assert.equal(r.audioFile, undefined, "引き継ぎ時に音声を再生しようとしている");
+    assert.deepEqual(r.segments, [], "引き継ぎ時に音声を再生しようとしている");
     assert.equal(engine.finished, true);
   });
 }
@@ -98,7 +98,7 @@ for (const text of ABSENT_CASES) {
     const r = engine.respond(text);
     assert.equal(r.outcome, "absent");
     assert.equal(r.utterance, VOICE_LINES.reject.text);
-    assert.equal(r.audioFile, "public/audio/reject_closing.mp3");
+    assert.deepEqual(audioFiles(r.segments), ["public/audio/reject_closing.mp3"]);
     assert.equal(engine.finished, true);
     assert.equal(engine.absenceRecord?.said, text);
   });
@@ -123,7 +123,7 @@ test("タイプB: 営業お断りは即座に終話する", () => {
 test("タイプB: 第一声は取次ぎ依頼で、録音が紐づく", () => {
   const { first } = fresh();
   assert.equal(first.utterance, VOICE_LINES.greeting.text);
-  assert.equal(first.audioFile, "public/audio/p0_greeting.mp3");
+  assert.deepEqual(audioFiles(first.segments), ["public/audio/p0_greeting.mp3"]);
   assert.equal(first.outcome, "calling");
 });
 
@@ -214,7 +214,7 @@ for (const text of SELF_IDENTIFY_CASES) {
     assert.equal(r.handover, true, `引き継ぎ状態になっていない: ${r.matched}`);
     assert.equal(r.outcome, "handover");
     assert.equal(r.utterance, "", "引き継ぎ時に AI が発話している");
-    assert.equal(r.audioFile, undefined, "引き継ぎ時に音声を再生しようとしている");
+    assert.deepEqual(r.segments, [], "引き継ぎ時に音声を再生しようとしている");
   });
 }
 

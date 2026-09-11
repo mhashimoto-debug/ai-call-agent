@@ -8,7 +8,11 @@
  *
  * ブラウザの TTS は SSML を受け付けないため、ポーズは
  * 「文を分けて間隔を空けて読む」ことで作っている。
+ *
+ * 応答の再生（playSegments）もここに置く。録音（MP3）のある区間は録音、
+ * 無い区間は読み上げで、区間の並びどおりに順に鳴らす。
  */
+import type { SpeechSegment } from "../demo/voiceLines.js";
 
 // ---------- ボイス選択 ----------
 
@@ -186,11 +190,40 @@ const wait = (ms: number): Promise<void> => new Promise((r) => window.setTimeout
  */
 export async function speakUtterance(raw: string, opt: SpeakOptions): Promise<void> {
   if (!("speechSynthesis" in window) || !raw.trim()) return;
+  const token = playbackToken();
   const sentences = splitForSpeech(speechText(raw));
   for (let i = 0; i < sentences.length; i++) {
+    // 停止されたら残りの文は読まない（cancel() が止めるのは読み上げ中の1文だけのため）
+    if (token.cancelled) return;
     await speakOne(sentences[i]!, opt);
     if (i < sentences.length - 1) await wait(opt.gapMs ?? 220);
   }
+}
+
+// ---------- 停止 ----------
+
+/** 停止操作のたびに進む世代番号。再生途中のループは、これが変わったら残りを鳴らさない。 */
+let generation = 0;
+
+export interface PlaybackToken {
+  readonly cancelled: boolean;
+}
+
+/** 再生を始めるときに取る。以降に stopAll() が呼ばれると cancelled が true になる。 */
+export function playbackToken(): PlaybackToken {
+  const started = generation;
+  return {
+    get cancelled() {
+      return started !== generation;
+    },
+  };
+}
+
+/** 読み上げ・録音をすべて止める（リセット・マイク開始・読み上げOFFから呼ぶ）。応答の残りの区間も鳴らさない。 */
+export function stopAll(): void {
+  generation++;
+  window.speechSynthesis?.cancel();
+  stopAudio();
 }
 
 // ---------- 録音ファイルの再生（MP3 優先再生） ----------
@@ -200,38 +233,102 @@ export async function speakUtterance(raw: string, opt: SpeakOptions): Promise<vo
 // 見つからない・鳴らせない場合だけ speakUtterance() にフォールバックする。
 
 let currentAudio: HTMLAudioElement | null = null;
+/** 再生中の録音の完了待ちを解く。停止したときに呼んで、待っている側を先へ進める。 */
+let settleCurrent: ((ok: boolean) => void) | null = null;
 
-/** 再生中の録音を止める（リセット・マイク開始・停止操作から呼ぶ）。 */
-export function stopAudio(): void {
+function stopAudio(): void {
   const a = currentAudio;
+  const settle = settleCurrent;
   currentAudio = null;
-  if (!a) return;
-  a.pause();
-  a.currentTime = 0;
+  settleCurrent = null;
+  if (a) {
+    a.pause();
+    a.currentTime = 0;
+  }
+  settle?.(false);
+}
+
+/** 録音の読み込みを始めておく。連続再生で次の区間を待たせないよう、鳴らす前にまとめて呼ぶ。 */
+export function loadClip(url: string): HTMLAudioElement {
+  const audio = new Audio(url);
+  audio.preload = "auto";
+  audio.load();
+  return audio;
 }
 
 /**
- * 録音を1本再生する。鳴り終わるまで解決しないので、ログの表示と音声がずれない。
- * 戻り値は「実際に再生できたか」。false ならフォールバックして読み上げる。
+ * 読み込みを始めた録音を1本鳴らす。鳴り終わるまで解決しないので、ログの表示と音声がずれない。
+ * 戻り値は「最後まで鳴らせたか」。ファイルが無い・デコードできない・停止された場合は false。
  */
-export function playAudioFile(url: string): Promise<boolean> {
+export function playClip(audio: HTMLAudioElement): Promise<boolean> {
   stopAudio();
+  // 読み込みの段階で失敗していれば（404 など）、待たずに読み上げへ回す
+  if (audio.error) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const audio = new Audio(url);
-    currentAudio = audio;
-
     let done = false;
     const finish = (ok: boolean): void => {
       if (done) return;
       done = true;
-      if (currentAudio === audio) currentAudio = null;
+      if (currentAudio === audio) {
+        currentAudio = null;
+        settleCurrent = null;
+      }
       resolve(ok);
     };
-
+    currentAudio = audio;
+    settleCurrent = finish;
     audio.onended = () => finish(true);
-    // ファイルが無い・デコードできない場合は読み上げに回す
     audio.onerror = () => finish(false);
     // 自動再生がブロックされた場合も同様（マイク操作後なので通常は起きない）
     audio.play().catch(() => finish(false));
   });
+}
+
+// ---------- 応答の再生（区間の連続再生） ----------
+
+/**
+ * 再生の単位にまとめる。録音の無い区間が続くときは1回の読み上げにつなげる
+ * （区間ごとに読み上げを分けると、文の途中で間が空いて不自然になるため）。
+ */
+export function playbackRuns(segments: readonly SpeechSegment[]): SpeechSegment[] {
+  const runs: SpeechSegment[] = [];
+  for (const s of segments) {
+    const prev = runs.at(-1);
+    if (prev && !prev.audioFile && !s.audioFile) runs[runs.length - 1] = { text: prev.text + s.text };
+    else runs.push(s);
+  }
+  return runs;
+}
+
+/** 区間の鳴らし方。ブラウザでの実際の再生と、テストでの差し替えを同じ手順で動かすために分けてある。 */
+export interface SegmentPlayer<C> {
+  /** 録音の読み込みを始める（鳴らす前にまとめて呼ぶ） */
+  load(url: string): C;
+  /** 読み込んだ録音を鳴らす。最後まで鳴れば true */
+  play(clip: C): Promise<boolean>;
+  /** テキストを読み上げる */
+  speak(text: string): Promise<void>;
+}
+
+/**
+ * 応答の区間を順に鳴らす。
+ * 録音は最初にまとめて読み込みを始めるので、1本目を鳴らしている間に後続が揃い、つなぎ目で待たない。
+ * 録音を鳴らせなかった区間は、その区間のテキストを読み上げて補う。停止されたら残りは鳴らさない。
+ */
+export async function playSegments<C>(
+  segments: readonly SpeechSegment[],
+  player: SegmentPlayer<C>,
+  token: PlaybackToken,
+): Promise<void> {
+  const queue = playbackRuns(segments).map((run) => ({
+    run,
+    clip: run.audioFile ? player.load(run.audioFile) : undefined,
+  }));
+  for (const { run, clip } of queue) {
+    if (token.cancelled) return;
+    if (clip !== undefined && (await player.play(clip))) continue;
+    // 停止で打ち切られた場合は、読み上げで補わずにそのまま終える
+    if (token.cancelled) return;
+    await player.speak(run.text);
+  }
 }

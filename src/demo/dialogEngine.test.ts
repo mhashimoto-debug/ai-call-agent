@@ -1,18 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  AUDIO_BASE,
-  bulkExtract,
-  DialogEngine,
-  GUARDRAIL_LINE,
-  VOICE_LINES,
-} from "./dialogEngine.js";
+import { bulkExtract, DialogEngine, GUARDRAIL_LINE, type DialogReply } from "./dialogEngine.js";
+import { AUDIO_BASE, PHRASES, VOICE_LINES, audioFiles } from "./voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
 import type { GuardrailId } from "../domain/types.js";
-import { createCallState } from "../domain/state.js";
+import { applyExtracted, createCallState } from "../domain/state.js";
 import { evaluateDod } from "../domain/dod.js";
 import { autoFix, checkForbidden } from "../domain/forbidden.js";
 
@@ -21,32 +13,17 @@ function fresh() {
   return { state, dialog: new DialogEngine(state) };
 }
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-
 // ---------- 収録台本と画面表示テキストの一致 ----------
-
-test("収録台本は出力前フィルタで書き換えられない（表示テキストと音声が食い違わない）", () => {
-  for (const [id, line] of Object.entries(VOICE_LINES)) {
-    assert.equal(autoFix(line.text).text, line.text, `${id} が自動修正で書き換わる`);
-    assert.deepEqual(checkForbidden(line.text), [], `${id} に禁止表現がある`);
-  }
-});
-
-test("録音ファイルはすべて public/audio/ に実在する", () => {
-  for (const [id, line] of Object.entries(VOICE_LINES)) {
-    assert.ok(fs.existsSync(path.join(REPO, AUDIO_BASE, line.file)), `${id}: ${line.file} が無い`);
-  }
-});
 
 test("応答の表示テキストは収録台本と完全一致し、対応する MP3 が付く", () => {
   const { dialog } = fresh();
   const g = dialog.greeting();
   assert.equal(g.utterance, VOICE_LINES.greeting.text);
-  assert.equal(g.audioFile, `${AUDIO_BASE}${VOICE_LINES.greeting.file}`);
+  assert.deepEqual(audioFiles(g.segments), [`${AUDIO_BASE}${VOICE_LINES.greeting.file}`]);
 
   const r = dialog.respond("どういったご用件でしょうか？");
   assert.equal(r.utterance, VOICE_LINES.overview.text);
-  assert.equal(r.audioFile, `${AUDIO_BASE}${VOICE_LINES.overview.file}`);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}${VOICE_LINES.overview.file}`]);
 });
 
 // ---------- ガードレール ----------
@@ -57,7 +34,7 @@ test("R2 多忙は新台本どおり要点＋人数確認まで一気に運ぶ",
   const r = dialog.respond("今ちょっと忙しいんですよ");
   assert.ok(r.guardrails.includes("R2"));
   assert.equal(r.utterance, VOICE_LINES.r2Busy.text);
-  assert.equal(r.audioFile, `${AUDIO_BASE}r2_busy.mp3`);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}r2_busy.mp3`]);
   assert.match(r.utterance, /御社の現在の従業員数だけお伺いできますでしょうか/);
   // 続けて言われた人数は、フェーズに関係なくその場で回収する
   dialog.respond("うちは20人くらいですね");
@@ -100,15 +77,15 @@ test("R5 は誤認の種類で切り返しを分ける（他制度は録音、�
   const other = d1.respond("それってiDeCoのことですよね？");
   assert.ok(other.guardrails.includes("R5"));
   assert.equal(other.utterance, VOICE_LINES.r5OtherScheme.text);
-  assert.equal(other.audioFile, `${AUDIO_BASE}r5_misunderstanding.mp3`);
+  assert.deepEqual(audioFiles(other.segments), [`${AUDIO_BASE}r5_misunderstanding.mp3`]);
 
   const { state: s2, dialog: d2 } = fresh();
   s2.phase = "P3";
   const publicBody = d2.respond("お国がやるなら手数料もかからんのでしょう");
   assert.ok(publicBody.guardrails.includes("R5"));
-  // 立場の切り分けは実データ由来の必須ルール。収録が無くても必ず言う
+  // 立場の切り分けは実データ由来の必須ルール。他制度用の録音ではなく専用の一言で必ず言う
   assert.match(publicBody.utterance, /民間の導入支援事業者/);
-  assert.equal(publicBody.audioFile, undefined);
+  assert.deepEqual(publicBody.segments.map((s) => s.text), [PHRASES.r5PublicBody.text]);
 });
 
 test("R7 決裁者不在は連絡先の確保に切り替える", () => {
@@ -164,7 +141,7 @@ test("想定外の発話でも読み上げに落とさず、録音で会話を�
   // 2回目: 答えやすい最小の質問（人数だけ）に切り替える
   const second = dialog.respond("いやー、どうもよく分からないですね");
   assert.equal(second.utterance, VOICE_LINES.r1NoSystem.text);
-  assert.equal(second.audioFile, `${AUDIO_BASE}r1_no_system.mp3`);
+  assert.deepEqual(audioFiles(second.segments), [`${AUDIO_BASE}r1_no_system.mp3`]);
   assert.match(second.matched, /最小の質問/);
 
   // 3回目: 内容を離れて日程の話に振る
@@ -188,7 +165,7 @@ test("立て直しの途中で回答が得られたら通常の進行に戻る",
   assert.equal(state.hearing.H3, "40代");
   assert.equal(state.hearing.H5, "20名");
   assert.equal(answered.utterance, VOICE_LINES.hearingFiscalEmail.text);
-  assert.equal(answered.audioFile, `${AUDIO_BASE}p4_p5_hearin.mp3`);
+  assert.deepEqual(audioFiles(answered.segments), [`${AUDIO_BASE}p4_p5_hearin.mp3`]);
 });
 
 test("日程NGは開いた質問に戻さず収録済みの代替日程で出し直す", () => {
@@ -196,7 +173,7 @@ test("日程NGは開いた質問に戻さず収録済みの代替日程で出し
   state.phase = "P7";
   const r = dialog.respond("その日は予定が入っておりまして");
   assert.equal(r.utterance, VOICE_LINES.reschedule.text);
-  assert.equal(r.audioFile, `${AUDIO_BASE}reschedule.mp3`);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}reschedule.mp3`]);
   assert.equal(r.phase, "P7");
 });
 
@@ -261,7 +238,7 @@ test("新台本の自由発話で通しても DoD が全項目○になる", () 
   say("決算は3月です。メールは nakamura@sample-kogyo.co.jp でお願いします");
   say("はい、その時間なら大丈夫です");
   say("090-1234-5678 です");
-  // ここから先は収録台本に無い項目（音声合成で補う）
+  // ここから先は主台本に無い項目（PHRASES の個別質問）
   say("iDeCoはやっていません");
   say("退職金は保険だけです");
   say("私は56歳です");
@@ -320,12 +297,12 @@ test("2回連続の多忙は食い下がらず、収録済みの終話へ直接�
   // 1回目: 30秒だけ要点を伝えて食い下がる
   const busy = dialog.respond("ちょっと今忙しいんだよね");
   assert.equal(busy.utterance, VOICE_LINES.r2Busy.text);
-  assert.equal(busy.audioFile, `${AUDIO_BASE}r2_busy.mp3`);
+  assert.deepEqual(audioFiles(busy.segments), [`${AUDIO_BASE}r2_busy.mp3`]);
 
   // 2回目: 別の話題に引き延ばさず丁寧に終話する
   const closed = dialog.respond("だから今バタバタしてるんだって");
   assert.equal(closed.utterance, VOICE_LINES.reject.text);
-  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.deepEqual(audioFiles(closed.segments), [`${AUDIO_BASE}reject_closing.mp3`]);
   assert.match(closed.matched, /2回連続の多忙/);
   assert.equal(state.ended, true);
 
@@ -343,7 +320,7 @@ test("多忙が続いても同じセリフが2回連続せず、2ターンで終
   for (const input of inputs) {
     const r = dialog.respond(input);
     assert.notEqual(r.utterance, previous, `同じセリフが連続している: ${r.utterance.slice(0, 24)}`);
-    assert.ok(r.audioFile, `録音ではなく音声合成に落ちている: ${r.matched}`);
+    assert.ok(audioFiles(r.segments).length > 0, `録音ではなく音声合成に落ちている: ${r.matched}`);
     previous = r.utterance;
   }
   assert.equal(state.ended, true);
@@ -430,7 +407,7 @@ test("不在と言われたら人数確認ではなく不在用の切り返し�
   dialog.greeting();
   const r = dialog.respond("今不在にしてます");
   assert.equal(r.utterance, VOICE_LINES.r7Absent.text);
-  assert.equal(r.audioFile, `${AUDIO_BASE}r7_absent.mp3`);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}r7_absent.mp3`]);
   assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text);
   assert.doesNotMatch(r.matched, /判定できず/);
 });
@@ -493,7 +470,7 @@ test("2回連続で断られたら丁寧に終話する", () => {
   dialog.respond("うちはもう対策してるので");
   const closed = dialog.respond("いや、間に合ってます");
   assert.equal(closed.utterance, VOICE_LINES.reject.text);
-  assert.equal(closed.audioFile, `${AUDIO_BASE}reject_closing.mp3`);
+  assert.deepEqual(audioFiles(closed.segments), [`${AUDIO_BASE}reject_closing.mp3`]);
   assert.equal(state.ended, true);
 });
 
@@ -531,7 +508,7 @@ test("R2 の切り返しで聞いた従業員数は「20名です」だけでも
   const next = dialog.respond("20名です");
   assert.equal(state.hearing.H5, "20名");
   assert.equal(next.utterance, VOICE_LINES.hearingFiscalEmail.text);
-  assert.equal(next.audioFile, `${AUDIO_BASE}p4_p5_hearin.mp3`);
+  assert.deepEqual(audioFiles(next.segments), [`${AUDIO_BASE}p4_p5_hearin.mp3`]);
   assert.doesNotMatch(next.matched, /判定できず/);
 
   // そのまま日程打診まで進める
@@ -556,7 +533,74 @@ test("言い直しは冒頭の挨拶ではなく、直前に流した質問を�
 
   const again = dialog.respond("えーっと、なんだっけ");
   assert.notEqual(again.utterance, greeting.utterance, "冒頭の挨拶に巻き戻っている");
-  assert.notEqual(again.audioFile, `${AUDIO_BASE}p0_greeting.mp3`);
+  assert.ok(!audioFiles(again.segments).includes(`${AUDIO_BASE}p0_greeting.mp3`));
   assert.match(again.utterance, /従業員数/);
   assert.match(again.matched, /聞き直す/);
+});
+
+// ---------- 区間（録音 or 音声合成）の組み立て ----------
+
+const texts = (r: DialogReply): string[] => r.segments.map((s) => s.text);
+
+test("同じ通話で2回目に言う台本も録音で流す（合成音声に落とさない）", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  const first = dialog.respond("はい");
+  dialog.respond("社長は外出中です");
+  const again = dialog.respond("あ、戻ってきました、代わります");
+  assert.equal(first.utterance, VOICE_LINES.overview.text);
+  assert.equal(again.utterance, VOICE_LINES.overview.text);
+  assert.deepEqual(audioFiles(again.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
+});
+
+test("P8 の聞き直しは「前置き」と「質問」を別の区間として並べ、前置きは毎回変える", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  dialog.respond("はい、その時間で大丈夫です"); // → P8（前日確認の電話番号）
+  const first = dialog.respond("えーっと");
+  assert.deepEqual(texts(first), [PHRASES.reask1.text, PHRASES.askCallbackPhone.text]);
+  const second = dialog.respond("うーん");
+  assert.deepEqual(texts(second), [PHRASES.reask2.text, PHRASES.askCallbackPhone.text]);
+});
+
+test("「この番号でいいです」への返事とメールアドレスの質問は別の区間で続けて流す", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  dialog.respond("はい、その時間で大丈夫です");
+  const r = dialog.respond("この番号でいいです");
+  assert.deepEqual(texts(r), [PHRASES.currentNumberAck.text, PHRASES.currentNumberEmail.text]);
+});
+
+test("メールアドレスの復唱は、アドレスだけを差し込み区間にして前後を固定文で挟む", () => {
+  const { state, dialog } = fresh();
+  applyExtracted(state, {
+    H1: "なし",
+    H2: "保険",
+    H3: "56歳",
+    H4: "2名",
+    H5: "12名",
+    H6: "代表の判断で決裁可能",
+    H7: "3月",
+    email: "nakamura@sample-kogyo.co.jp",
+  });
+  state.phase = "P7";
+  dialog.respond("はい、その時間で大丈夫です");
+  const r = dialog.respond("090-1234-5678 です");
+  assert.deepEqual(texts(r), [
+    PHRASES.emailConfirmPre.text,
+    "nakamura@sample-kogyo.co.jp ",
+    PHRASES.emailConfirmPost.text,
+  ]);
+  assert.equal(r.segments[1]?.audioFile, undefined, "差し込みのアドレスは音声合成で読む");
+  assert.equal(r.utterance, "復唱させていただきます。nakamura@sample-kogyo.co.jp でお間違いないでしょうか？");
+});
+
+test("不在時の戻り時間は差し込み区間にし、前後の固定文と分ける", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("担当は今不在にしてます");
+  const askContact = dialog.respond("夕方には戻ります");
+  assert.deepEqual(texts(askContact), [PHRASES.r7Ack.text, "夕方頃に", PHRASES.r7CallbackAskContact.text]);
+  const closing = dialog.respond("090-1234-5678 です");
+  assert.deepEqual(texts(closing), [PHRASES.r7Thanks.text, "夕方頃に", PHRASES.r7CallbackClosing.text]);
 });

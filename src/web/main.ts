@@ -17,10 +17,20 @@ import { evaluateDod } from "../domain/dod.js";
 import { createCallState, type CallState } from "../domain/state.js";
 import { DEMO_SCENARIO } from "../demo/scenario.js";
 import type { PhaseId } from "../domain/types.js";
-import { japaneseVoices, playAudioFile, speakUtterance, stopAudio } from "./speech.js";
+import {
+  japaneseVoices,
+  loadClip,
+  playbackRuns,
+  playbackToken,
+  playClip,
+  playSegments,
+  speakUtterance,
+  stopAll,
+} from "./speech.js";
 import { MicInput, micSupported } from "./mic.js";
 import { DialogEngine } from "../demo/dialogEngine.js";
 import { TransferEngine, type AgentMode } from "../demo/transferEngine.js";
+import type { SpeechSegment } from "../demo/voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
 
 const $ = (id: string): HTMLElement => {
@@ -295,19 +305,25 @@ function speak(text: string): Promise<void> {
 
 /**
  * AI の発話を鳴らす。
- * 対応する録音（public/audio/*.mp3）があれば合成音声より優先して再生し、
- * 録音が無い発話（その場で組み立てた質問文など）と再生に失敗したときだけ読み上げる。
+ * 応答は区間の並び（前置き＋質問、固定文＋差し込み＋固定文 など）になっていて、
+ * 録音（public/audio/*.mp3）のある区間は録音、無い区間と再生に失敗した区間は読み上げで、順に鳴らす。
+ * 録音は最初にまとめて読み込むので、区間のつなぎ目で途切れない。
  */
-async function speakReply(text: string, audioFile?: string): Promise<void> {
+async function speakReply(segments: readonly SpeechSegment[]): Promise<void> {
   if (!voiceOn()) return;
-  if (audioFile && (await playAudioFile(audioFile))) return;
-  await speak(text);
+  await playSegments(segments, { load: loadClip, play: playClip, speak }, playbackToken());
 }
 
-/** 音声の停止（読み上げ・録音の両方）。 */
+/** 音声の停止（読み上げ・録音の両方。再生途中の応答は残りの区間も鳴らさない）。 */
 function stopVoice(): void {
-  window.speechSynthesis?.cancel();
-  stopAudio();
+  stopAll();
+}
+
+/** どの音源で喋るかの表示（「録音 p8_reask_1.mp3 ＋ 音声合成」など）。 */
+function describeSource(segments: readonly SpeechSegment[]): string {
+  return playbackRuns(segments)
+    .map((r) => (r.audioFile ? `録音 ${r.audioFile.split("/").pop()}` : "音声合成"))
+    .join(" ＋ ");
 }
 
 const pause = (ms: number): Promise<void> =>
@@ -378,13 +394,13 @@ async function handleCustomerUtterance(text: string): Promise<void> {
     }
     const node = pushMessage("ai", "AI", r.utterance);
     // 「なぜこう返したか」と、どの音源で喋るかを内部メモとして出す
-    const source = r.audioFile ? `録音 ${r.audioFile.split("/").pop()}` : "音声合成";
+    const source = describeSource(r.segments);
     const why = el("div", "flag", `判定: ${r.matched} ／ 音源: ${source}`);
     transcript().append(why);
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
-    await speakReply(r.utterance, r.audioFile);
+    await speakReply(r.segments);
     node.classList.remove("speaking");
     renderAll();
   } finally {
@@ -431,7 +447,7 @@ async function handleTransferUtterance(text: string): Promise<void> {
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
-    await speakReply(r.utterance, r.audioFile);
+    await speakReply(r.segments);
     node.classList.remove("speaking");
     renderAll();
   } finally {
@@ -523,7 +539,7 @@ async function startCall(): Promise<void> {
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
-    await speakReply(r.utterance, r.audioFile);
+    await speakReply(r.segments);
     node.classList.remove("speaking");
     setMicNote("「🎤 話す」を押して話しかけてください。");
   } finally {
