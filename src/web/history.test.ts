@@ -39,7 +39,9 @@ function runCallA(turns: string[]): { state: CallState; log: LogLine[]; endedAt:
     log.push({ at: t, who: "相手", text });
     engine.pushCustomer(text, detectGuardrails(text));
     t += 3_000;
-    log.push({ at: t, who: "AI", text: engine.respond(text).utterance });
+    // 画面と同じく、保留中の無言は AI の発話ではなくシステムの記録として残す
+    const r = engine.respond(text);
+    log.push(r.holding ? { at: t, who: "システム", text: r.matched } : { at: t, who: "AI", text: r.utterance });
   }
   return { state, log, endedAt: t };
 }
@@ -47,6 +49,8 @@ function runCallA(turns: string[]): { state: CallState; log: LogLine[]; endedAt:
 const APPOINTMENT_TURNS = [
   "少々お待ちください、代わります",
   "はい、代表の中村です",
+  "はい、どういったお話でしょう",
+  "なるほど",
   "50代で、役員2名と社員18名の20人です",
   "決算は3月で、メールは nakamura@example.co.jp です",
   "はい、その時間なら大丈夫です",
@@ -101,7 +105,8 @@ test("タイプA 完走: 締めで通話終了になり、アポ獲得として 
   assert.ok(r.data.every((d) => d.value), "7項目と連絡先がすべて取得済み");
 
   assert.equal(r.log.length, 1 + APPOINTMENT_TURNS.length * 2);
-  assert.deepEqual(r.log.map((l) => l.who).slice(0, 3), ["AI", "相手", "AI"]);
+  // 取次ぎの保留中は AI が喋らず、システムの記録だけが残る
+  assert.deepEqual(r.log.map((l) => l.who).slice(0, 5), ["AI", "相手", "システム", "相手", "AI"]);
   assert.notEqual(r.log, log, "ログは記録時点の写しを持つ");
 });
 

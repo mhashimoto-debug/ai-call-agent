@@ -402,6 +402,13 @@ async function handleCustomerUtterance(text: string): Promise<void> {
     await pause(200);
 
     const r = dialog.respond(text);
+    if (r.holding) {
+      // 保留中は AI は喋らない。判定だけ出して、代わって出る相手の発話を待つ
+      pushFlag(`判定: ${r.matched}`);
+      logLine("システム", r.matched);
+      renderAll();
+      return;
+    }
     if (r.overrideReason) pushFlag(`⚠ 遷移を却下: ${r.overrideReason}`);
     if (r.blocked.length > 0) {
       pushFlag(

@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CURRENT_NUMBER_LABEL, DialogEngine, type DialogReply } from "./dialogEngine.js";
-import { AUDIO_BASE, VOICE_LINES, audioFiles, type SpeechSegment } from "./voiceLines.js";
+import { AUDIO_BASE, PHRASES, VOICE_LINES, audioFiles, type SpeechSegment } from "./voiceLines.js";
 import { TransferEngine, type TransferReply } from "./transferEngine.js";
 import { createCallState, type CallState } from "../domain/state.js";
 import { evaluateDod } from "../domain/dod.js";
@@ -50,9 +50,18 @@ class CallA {
   }
 }
 
-/** 挨拶への巻き戻り・判定失敗・同じ応答の連続が無く、録音がすべて揃っていること。 */
+/**
+ * 挨拶への巻き戻り・判定失敗・同じ応答の連続が無く、録音がすべて揃っていること。
+ * 保留中の無言（holding）は発話に数えない。
+ */
 function assertHealthyA(call: CallA, label: string): void {
+  let previous: string | undefined;
   call.replies.forEach((r, i) => {
+    if (r.holding) {
+      assert.equal(r.utterance, "", `${label}: ${i}ターン目の保留中に発話している`);
+      assert.deepEqual(r.segments, [], `${label}: ${i}ターン目の保留中に音声を再生しようとしている`);
+      return;
+    }
     assert.ok(r.utterance.length > 0, `${label}: ${i}ターン目の発話が空`);
     assertAudioExists(r.segments, `${label}: ${i}ターン目`);
     assert.equal(
@@ -60,27 +69,53 @@ function assertHealthyA(call: CallA, label: string): void {
       r.utterance,
       `${label}: ${i}ターン目で再生する区間と表示テキストが食い違う`,
     );
-    if (i === 0) return;
-    assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `${label}: ${i}ターン目で冒頭の挨拶に巻き戻っている`);
-    assert.doesNotMatch(r.matched, /判定できず|読み取れず/, `${label}: ${i}ターン目で判定に失敗（${r.matched}）`);
-    assert.notEqual(r.utterance, call.replies[i - 1]?.utterance, `${label}: ${i}ターン目で同じ応答を続けている`);
+    if (i > 0) {
+      assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `${label}: ${i}ターン目で冒頭の挨拶に巻き戻っている`);
+      assert.doesNotMatch(r.matched, /判定できず|読み取れず/, `${label}: ${i}ターン目で判定に失敗（${r.matched}）`);
+      assert.notEqual(r.utterance, previous, `${label}: ${i}ターン目で同じ応答を続けている`);
+    }
+    previous = r.utterance;
   });
+}
+
+/**
+ * 受付の取次ぎ（保留 → 担当者が応答 → 名乗り直し → 概要）を経て、年齢層・人数を尋ねるまで。
+ * 期待する応答が空文字のターンは「発話せずに待つ」。
+ */
+const HANDOFF_TURNS: [string, string][] = [
+  ["少々お待ちください、代わります", ""],
+  ["はい、代表の中村です", PHRASES.handoffReintro.text],
+  ["はい、どういったお話でしょう", VOICE_LINES.overview.text],
+  ["なるほど、そうなんですね", VOICE_LINES.hearingAgeCount.text],
+];
+
+/** 受付の取次ぎを経て、担当者に年齢層・人数を尋ねるところまで進める。 */
+function passReception(call: CallA): void {
+  for (const [text, expected] of HANDOFF_TURNS) {
+    const r = call.say(text);
+    assert.equal(r.utterance, expected, `取次ぎ「${text}」への応答が違う: ${r.matched}`);
+  }
 }
 
 // ---------- A-1. 正常突破 → アポ確定 ----------
 
 /** 受付突破のしかた（取次ぎ／本人応答）ごとに、最後まで通るかを見る。 */
-const A_OPENINGS: { label: string; turns: [string, string] }[] = [
-  { label: "取次ぎ", turns: ["少々お待ちください、代わります", "はい、代表の中村です"] },
-  { label: "本人応答", turns: ["私です", "はい、聞いてますよ"] },
+const A_OPENINGS: { label: string; opening: [string, string][] }[] = [
+  { label: "取次ぎ", opening: HANDOFF_TURNS },
+  {
+    label: "本人応答",
+    opening: [
+      ["私です", VOICE_LINES.overview.text],
+      ["はい、聞いてますよ", VOICE_LINES.hearingAgeCount.text],
+    ],
+  },
 ];
 
-for (const { label, turns } of A_OPENINGS) {
+for (const { label, opening } of A_OPENINGS) {
   test(`デモA 正常突破(${label}): 締め(P9)まで通り、DoD が全項目○になる`, () => {
     const call = new CallA();
     const steps: [string, string | RegExp][] = [
-      [turns[0], VOICE_LINES.overview.text],
-      [turns[1], VOICE_LINES.hearingAgeCount.text],
+      ...opening,
       ["50代で、役員2名と社員18名の20人です", VOICE_LINES.hearingFiscalEmail.text],
       ["決算は3月で、メールは nakamura@example.co.jp です", VOICE_LINES.schedule.text],
       ["はい、その時間なら大丈夫です", VOICE_LINES.contact.text],
@@ -113,8 +148,7 @@ for (const { label, turns } of A_OPENINGS) {
 
 test("デモA 正常突破: P8 で「制度はない」と答えても従業員数の聞き直しに戻らない", () => {
   const call = new CallA();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で、役員2名と社員18名の20人です");
   call.say("決算は3月で、メールは nakamura@example.co.jp です");
   call.say("はい、その時間なら大丈夫です");
@@ -132,7 +166,7 @@ test("デモA 正常突破: P8 で「制度はない」と答えても従業員�
 // ---------- A-2. 担当名ガード ----------
 
 for (const text of ["担当者のお名前はお分かりでしょうか", "担当者名 お分かりでしょうか", "誰に繋げばいいですか"]) {
-  test(`デモA 担当名ガード: 「${text}」→ 部署・役職で返し、取次ぎ後は概要説明へ進む`, () => {
+  test(`デモA 担当名ガード: 「${text}」→ 部署・役職で返し、取次ぎ後は名乗り直してから概要説明へ進む`, () => {
     const call = new CallA();
     const guard = call.say(text);
     assert.match(guard.utterance, /特定の個人名ではなく/);
@@ -140,10 +174,13 @@ for (const text of ["担当者のお名前はお分かりでしょうか", "担�
     assert.match(guard.utterance, /代表者様/);
     assert.equal(guard.phase, "P0", "取次ぎ前にフェーズが進んでいる");
 
-    const overview = call.say("では社長に代わりますね");
-    assert.equal(overview.utterance, VOICE_LINES.overview.text, `取次ぎ後に概要へ進まない: ${overview.matched}`);
+    const hold = call.say("では社長に代わりますね");
+    assert.equal(hold.holding, true, `取次ぎの保留中に発話している: ${hold.matched}`);
+    assert.equal(call.say("はい、社長の中村です").utterance, PHRASES.handoffReintro.text);
+    const overview = call.say("はい、どういったお話でしょう");
+    assert.equal(overview.utterance, VOICE_LINES.overview.text, `名乗り直しの後に概要へ進まない: ${overview.matched}`);
     assert.deepEqual(audioFiles(overview.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
-    assert.equal(call.say("はい、社長の中村です").utterance, VOICE_LINES.hearingAgeCount.text);
+    assert.equal(call.say("なるほど").utterance, VOICE_LINES.hearingAgeCount.text);
     assertHealthyA(call, `担当名ガード「${text}」`);
   });
 }
@@ -160,8 +197,7 @@ test("デモA 担当名ガード: 部署を示しても決まらなければ粘�
 
 test("デモA HP参照: ヒアリング中に言われたらオンライン打診へ切り替え、承諾で連絡先確認(P8)へ進む", () => {
   const call = new CallA();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で20人です");
   const pitch = call.say("ホームページに載ってるので見てください");
   assert.match(pitch.utterance, /サイトより確認/);
@@ -197,8 +233,7 @@ test("デモA HP参照: 打診のあとに断られたら粘らず終話する",
 
 test("デモA HP参照: 2回続けて言われたら丁寧に終話する", () => {
   const call = new CallA();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で20人です");
   call.say("ホームページに載ってるので見てください");
   const closed = call.say("それもホームページに載ってます");
@@ -298,8 +333,7 @@ test("デモA 断り: 受付の営業電話ブロックは食い下がらず撤�
 /** 連絡先の確認（p8_recovery.mp3）まで進めた通話。 */
 function callAtContact(opts: { withEmail: boolean }): CallA {
   const call = new CallA();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で、役員2名と社員18名の20人です");
   call.say(opts.withEmail ? "決算は3月で、メールは nakamura@example.co.jp です" : "決算は3月です");
   assert.equal(call.say("はい、その時間なら大丈夫です").utterance, VOICE_LINES.contact.text);

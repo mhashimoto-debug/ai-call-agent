@@ -48,6 +48,11 @@ export interface DialogReply {
    * 区間のテキストをつなげると utterance と一致する。
    */
   segments: SpeechSegment[];
+  /**
+   * 相手が保留にした（「少々お待ちください」）。AI は喋らずに相手の次の発話を待つ。
+   * このとき utterance は空で、segments も空。履歴にも AI の発話を積まない。
+   */
+  holding?: boolean;
 }
 
 /** 言い直しの対象にしない台本（言い切って終わるもの）。 */
@@ -120,6 +125,25 @@ export const ASK_PURPOSE =
 /** 取次ぎが発生した。 */
 const TRANSFER =
   /(お待ち|少々|少し待|代わり|かわり|変わり|繋ぎ|つなぎ|お繋ぎ|呼んで|呼びま|確認しま|担当に|本人に|代表に|社長に|今呼び|まいります)/;
+
+/**
+ * 保留の合図（「少々お待ちください」「代表に代わります」）。
+ * 電話口の相手が替わる途中なので、AI は喋らずに待つ。ここで概要や質問を流すと、
+ * 保留中の受付に向かって話し続けることになる。
+ * 「代わりました」（担当者が出た合図）とは語尾で切り分ける。
+ */
+const HOLD =
+  /((少々|少し|しばらく|ちょっと)[^。]{0,4}(お待ち|待って(ください|もらえ|いただけ|て))|お待ち(ください|いただけ|頂け|願え)|(代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り)|確認して(まいり|参り|きます))/;
+
+/** 別の人に電話を回す言い方。本人が手元の確認で待たせているだけの保留と切り分ける。 */
+const HANDOFF_VERB =
+  /((代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り))/;
+
+/** 代わって出た担当者の第一声（「お電話代わりました」「はい、代わりました」）。 */
+const TOOK_OVER = /(代わ|かわ|替わ)りました/;
+
+/** 保留が明けた合図（「お待たせしました」）。取次ぎの後なら、代わって出た担当者の第一声。 */
+const HOLD_OVER = /お待たせ/;
 /** 受付での営業電話ブロック。 */
 export const REFUSE_SALES =
   /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
@@ -425,6 +449,13 @@ type Part = PhraseId | SpeechSegment;
 /** ガードレールの切り返しで相手に投げた質問。次の発話をその文脈で読む。 */
 type Expecting = "headcount" | "contact" | null;
 
+/**
+ * 保留の種類。
+ * transfer: 受付が担当者に代わる途中（明けたら名乗り直す）
+ * check:    話している相手が手元の確認などで待たせているだけ（明けたらそのまま続ける）
+ */
+type Hold = "transfer" | "check" | null;
+
 export class DialogEngine {
   private pending: PendingSlot | null = null;
   /** 直前の発話で一括抽出できた項目（画面に「まとめ聞きで取得」と出すため） */
@@ -476,6 +507,15 @@ export class DialogEngine {
   private refusalStreak = 0;
   /** 直前に流した収録台本。言い直しはフェーズではなくこれを基準にする。 */
   private lastLine: VoiceLineId | null = null;
+  /** 相手が保留中か（保留中は AI は喋らない）。 */
+  private holding: Hold = null;
+  /** 本人・担当者と話していると分かっているか。受付の保留（取次ぎ）と、本人の保留を切り分ける。 */
+  private personOnLine = false;
+  /**
+   * 代わって出た担当者に、まだ概要を伝えていないか。
+   * 受付に概要を伝えたあとで取次がれた場合、担当者は用件を聞いていないので伝え直す。
+   */
+  private briefingOwed = false;
 
   constructor(private state: CallState) {}
 
@@ -509,6 +549,12 @@ export class DialogEngine {
         collected = "headcount";
       }
     }
+
+    // 「少々お待ちください」「代表に代わります」は保留の合図。相手が戻るまで AI は喋らない
+    if (this.isHold(text, fired)) return this.hold(text, fired);
+    // 保留が明けた。取次ぎの後なら、いま話しているのは代わって出た担当者
+    const resumed = this.holding;
+    this.holding = null;
 
     // 連絡先を聞いた直後の「この番号でいいです」は、番号が無くても回答として確定させる。
     // 「折り返して」「かけ直して」は多忙(R2)の言い回しにも当たるので、ガードレールより先に見る
@@ -554,6 +600,16 @@ export class DialogEngine {
     if (this.isDecline(text)) {
       this.refusalStreak++;
       return this.handleDecline(fired);
+    }
+
+    // 担当者が電話口に出た直後は、いきなりヒアリングに入らず名乗り直して用件を伝える
+    if (this.isArrival(text, resumed)) {
+      return this.reintroduce(
+        fired,
+        resumed === "transfer"
+          ? "取次ぎの保留が明けて担当者が応答 → 名乗り直して用件を伝える"
+          : "担当者が電話を代わった → 名乗り直して用件を伝える",
+      );
     }
 
     switch (this.state.phase) {
@@ -747,7 +803,8 @@ export class DialogEngine {
       this.unknownStreak = 0;
       return this.say("reject", "P0X", fired, "受付ブロック → 丁寧に撤退");
     }
-    // 取次ぎでも用件確認でも、次に話すのは法改正の概要（収録台本どおり）
+    // 取次ぎの申し出でも用件確認でも、次に話すのは法改正の概要（収録台本どおり）。
+    // 「少々お待ちください」のような保留の合図は、ここに来る前に hold で扱っている
     if (TRANSFER.test(text) || ASK_PURPOSE.test(text)) {
       this.unknownStreak = 0;
       return this.say(
@@ -760,6 +817,7 @@ export class DialogEngine {
     // 「私です」など本人が出た合図は、受付突破として概要説明へ進む
     if (SELF_IDENTIFIED.test(text)) {
       this.unknownStreak = 0;
+      this.personOnLine = true;
       return this.say("overview", "P1", fired, "本人が応答（受付突破） → 法改正の概要");
     }
     // 「はい、○○です」「もしもし」など、相手が電話口に出た合図には概要を伝える
@@ -771,7 +829,9 @@ export class DialogEngine {
   }
 
   private p1(text: string, fired: GuardrailId[]): DialogReply {
-    if (!this.said.has("overview")) {
+    // 名乗り直しの直後は、代わって出た担当者に概要を伝える（受付に伝えた分は担当者に届いていない）
+    if (!this.said.has("overview") || this.briefingOwed) {
+      this.briefingOwed = false;
       return this.say("overview", "P1", fired, "担当者接続 → 法改正の概要");
     }
     this.unknownStreak = 0;
@@ -1105,7 +1165,11 @@ export class DialogEngine {
    * どちらも取れないまま長引く場合は粘らずに終話する。
    */
   private absentFollowUp(text: string, fired: GuardrailId[]): DialogReply {
-    // 途中で本人に代わってもらえた場合は不在対応をやめて通常の会話に戻す
+    // 途中で本人に代わってもらえた場合は不在対応をやめて通常の会話に戻す。
+    // 代わって出た本人には名乗り直してから用件を伝える
+    if (TOOK_OVER.test(text) || HOLD_OVER.test(text)) {
+      return this.reintroduce(fired, "不在から担当者に代わった → 名乗り直して用件を伝える");
+    }
     if (TRANSFER.test(text)) {
       this.absentMode = false;
       this.absentTurns = 0;
@@ -1152,6 +1216,72 @@ export class DialogEngine {
       );
     }
     return this.say("reject", this.toPhase("P0X"), fired, "不在: 確認が取れないため粘らず終話");
+  }
+
+  // ---------- 取次ぎ（保留 → 担当者が電話口に出る） ----------
+
+  /**
+   * 保留の合図かどうか。
+   * 取次ぎ先・用件を尋ねられている場合や、誤認（R5）を口にしている場合は黙らずに答える。
+   */
+  private isHold(text: string, fired: GuardrailId[]): boolean {
+    if (!HOLD.test(text) || TOOK_OVER.test(text) || HOLD_OVER.test(text)) return false;
+    return !this.isContactGuard(text) && !ASK_PURPOSE.test(text) && !fired.includes("R5");
+  }
+
+  /**
+   * 保留中は何も言わずに待つ。
+   * 受付の段階（P0/P1）の保留は取次ぎとみなし、明けたら名乗り直す。
+   * 本人と話している最中の保留は、「担当に代わります」のように人が替わる場合だけ取次ぎとみなす。
+   */
+  private hold(text: string, fired: GuardrailId[]): DialogReply {
+    const reception = this.state.phase === "P0" || this.state.phase === "P1";
+    const transfer = reception && (!this.personOnLine || HANDOFF_VERB.test(text));
+    this.holding = transfer ? "transfer" : "check";
+    this.unknownStreak = 0;
+    // 不在と言われたあとでも、代わってもらえるなら不在対応はやめる
+    if (transfer) this.absentMode = false;
+    return {
+      utterance: "",
+      phase: this.state.phase,
+      guardrails: fired,
+      matched: transfer
+        ? "取次ぎの保留 → 担当者が出るまで発話せずに待つ"
+        : "保留 → 相手が戻るまで発話せずに待つ",
+      blocked: [],
+      segments: [],
+      holding: true,
+    };
+  }
+
+  /**
+   * 担当者が電話口に出た直後か。
+   * 取次ぎの保留が明けた最初の発話は、名乗りの有無にかかわらず担当者のものとみなす。
+   * 保留の合図が聞き取れていなくても、「お電話代わりました」は担当者の第一声とみなす。
+   * 受付の段階（P0/P1）だけを見る。
+   */
+  private isArrival(text: string, resumed: Hold): boolean {
+    const phase = this.state.phase;
+    if (phase !== "P0" && phase !== "P1") return false;
+    // 戻ってきた受付の「営業はお断り」は撤退として扱う
+    if (REFUSE_SALES.test(text)) return false;
+    if (resumed === "transfer" || TOOK_OVER.test(text)) return true;
+    // 本人に待たされたあとの「お待たせしました」は、相手が替わっていないので名乗り直さない
+    return resumed === null && !this.personOnLine && HOLD_OVER.test(text);
+  }
+
+  /**
+   * 代わって出た担当者への第一声。
+   * 受付に名乗った内容は担当者に届いていないので、いきなりヒアリングに入らず、
+   * 名乗り直して用件を一言伝える。概要は相手の返事を受けてから P1 で伝える。
+   */
+  private reintroduce(fired: GuardrailId[], matched: string): DialogReply {
+    this.personOnLine = true;
+    this.absentMode = false;
+    this.absentTurns = 0;
+    this.unknownStreak = 0;
+    this.briefingOwed = this.said.has("overview");
+    return this.speakPhrases(["handoffReintro"], this.toPhase("P1"), fired, matched);
   }
 
   // ---------- 受付ガード（担当者名の確認・取次ぎ先不明） ----------

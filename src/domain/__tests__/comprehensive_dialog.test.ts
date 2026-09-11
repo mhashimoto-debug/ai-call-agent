@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DialogEngine, isContactGuard, type DialogReply } from "../../demo/dialogEngine.js";
-import { AUDIO_BASE, VOICE_LINES, audioFiles } from "../../demo/voiceLines.js";
+import { AUDIO_BASE, PHRASES, VOICE_LINES, audioFiles } from "../../demo/voiceLines.js";
 import { createCallState, type CallState } from "../state.js";
 import { detectGuardrails } from "../guardrails.js";
 import type { PhaseId } from "../types.js";
@@ -64,6 +64,15 @@ function assertNoBreakdown(call: Call, label: string): void {
   });
 }
 
+/** 受付の取次ぎ（保留 → 担当者が応答 → 名乗り直し → 概要）を経て、年齢層・人数を尋ねるところまで進める。 */
+function passReception(call: Call): void {
+  const hold = call.say("少々お待ちください、代わります");
+  assert.equal(hold.holding, true, `取次ぎの保留中に発話している: ${hold.matched}`);
+  assert.equal(call.say("はい、代表の中村です").utterance, PHRASES.handoffReintro.text);
+  assert.equal(call.say("はい、どういったお話でしょう").utterance, VOICE_LINES.overview.text);
+  assert.equal(call.say("なるほど").utterance, VOICE_LINES.hearingAgeCount.text);
+}
+
 // ============================================================
 // 1. 断り・拒絶（対策済み・間に合っている）
 // ============================================================
@@ -107,6 +116,8 @@ for (const text of DECLINE_CASES) {
 test("断り判定: 概要を伝えたあとの断りも拾う", () => {
   const call = new Call();
   call.say("少々お待ちください、代わります");
+  call.say("はい、代表の中村です"); // → 名乗り直し
+  call.say("はい、どういったお話でしょう"); // → 概要
   const r = call.say("うちはもう対策してるんで大丈夫です");
   assert.ok(!HEARING_LINES.includes(r.utterance), `一方的に進行している: ${r.matched}`);
 });
@@ -237,8 +248,7 @@ const AGE_COUNT_ANSWERS: string[] = [
 for (const text of AGE_COUNT_ANSWERS) {
   test(`P3(年齢層・人数)の回答: 「${text}」を拾って決算月の質問へ進む`, () => {
     const call = new Call();
-    call.say("少々お待ちください、代わります");
-    call.say("はい、代表の中村です");
+    passReception(call);
     const r = call.say(text);
     assert.ok(call.state.hearing.H5 || call.state.hearing.H4, `人数を取得できていない: ${r.matched}`);
     assert.equal(r.utterance, VOICE_LINES.hearingFiscalEmail.text, `次の質問へ進んでいない: ${r.matched}`);
@@ -289,10 +299,9 @@ test("日程NGは拒絶として終話させず、代替日程を出す", () => 
 // 5. 正常進行の非回帰
 // ============================================================
 
-test("正常進行: 取次ぎ → 概要 → 人数 → 決算月 → 日程 → 連絡先", () => {
+test("正常進行: 取次ぎ → 名乗り直し → 概要 → 人数 → 決算月 → 日程 → 連絡先", () => {
   const call = new Call();
-  assert.equal(call.say("少々お待ちください、代わります").utterance, VOICE_LINES.overview.text);
-  assert.equal(call.say("はい、代表の中村です").utterance, VOICE_LINES.hearingAgeCount.text);
+  passReception(call);
   assert.equal(
     call.say("50代で、役員2名と社員18名の20人です").utterance,
     VOICE_LINES.hearingFiscalEmail.text,
@@ -512,6 +521,11 @@ test("ランダムな受け答えを通しても会話が破綻しない", () =>
       const r = call.say(text);
       const ctx = `[${script.join(" / ")}]`;
 
+      // 保留中は喋らずに待つ。保留の合図以外で黙り込んではいけない
+      if (r.holding) {
+        assert.equal(text, "少々お待ちください", `${ctx} 保留の合図ではないのに黙っている`);
+        continue;
+      }
       assert.notEqual(r.utterance, VOICE_LINES.greeting.text, `${ctx} 冒頭の挨拶に巻き戻っている`);
       assert.notEqual(r.utterance, previous, `${ctx} 同じ応答を続けて返している`);
       const n = (counts.get(r.utterance) ?? 0) + 1;
@@ -559,8 +573,7 @@ test("HP参照: 本来の資料請求は引き続き R4 として扱う", () => 
 
 test("HP参照: メールアドレスを聞いた場面で言われても催促し直さない", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で20人です"); // → 決算月とメールアドレスの質問
   const r = call.say("ホームページに載ってるので見てください");
 
@@ -576,8 +589,7 @@ test("HP参照: メールアドレスを聞いた場面で言われても催促�
 
 test("HP参照: 2回続けて言われたら丁寧に終話する", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で20人です");
   call.say("ホームページに載ってるので見てください");
   const closed = call.say("それもホームページに載ってます");
@@ -589,8 +601,7 @@ test("HP参照: 2回続けて言われたら丁寧に終話する", () => {
 
 test("HP参照: メールアドレスの催促をオウム返ししない", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   call.say("50代で20人です");
   const first = call.say("ホームページに載ってるので見てください");
   const second = call.say("それもホームページに載ってます");
@@ -602,8 +613,7 @@ test("HP参照: メールアドレスの催促をオウム返ししない", () =
 
 test("HP参照: 資料請求のあとにHPと言われたら送付先を聞き直さない", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   const doc = call.say("とりあえず資料を送ってください");
   assert.equal(doc.utterance, VOICE_LINES.r4Document.text);
 
@@ -652,8 +662,7 @@ for (const text of CONTACT_GUARD_CASES) {
 
 test("受付ガード: ヒアリング中に名前を聞かれても人数確認に戻さない", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です"); // → 年齢層・人数の質問
+  passReception(call); // → 年齢層・人数の質問
   const r = call.say("担当者のお名前はお分かりでしょうか");
   assert.match(r.utterance, /個人名ではなく/);
   assert.notEqual(r.utterance, VOICE_LINES.hearingAgeCount.text);
@@ -675,8 +684,7 @@ test("受付ガード: 通常の用件確認は従来どおり概要を説明す
 
 test("HP参照: 「サイト通りです」も回避として扱い、初期の切り返しへ巻き戻さない", () => {
   const call = new Call();
-  call.say("少々お待ちください、代わります");
-  call.say("はい、代表の中村です");
+  passReception(call);
   const r = call.say("サイト通りです");
   assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text, "初期の切り返しへ巻き戻っている");
   assert.notEqual(r.utterance, VOICE_LINES.greeting.text);

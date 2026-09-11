@@ -139,6 +139,12 @@ export const PHRASES = {
     text: "はい、御社の現在の制度導入状況についての簡単な確認でございます。恐れ入りますが、ご担当者様にお繋ぎいただけますでしょうか？",
   },
 
+  // ---- 取次ぎ後（代わって出た担当者への名乗り直し） ----
+  handoffReintro: {
+    file: "p1_handoff_reintro.mp3",
+    text: "お電話代わっていただきありがとうございます！私、企業型確定拠出年金相談センターと申します。2026年12月の法改正の件でご連絡いたしました。",
+  },
+
   // ---- ガードレールの切り返し ----
   r5PublicBody: {
     file: "r5_public_body.mp3",
@@ -282,7 +288,10 @@ export type PhraseId = keyof typeof PHRASES;
  * 収録したら public/audio/ に置き、ここから外す。
  * 置いたのに外し忘れていると npm test が落ちて知らせる（逆も同じ）。
  */
-export const UNRECORDED: ReadonlySet<string> = new Set<string>([]);
+export const UNRECORDED: ReadonlySet<string> = new Set<string>([
+  // 取次ぎ後の名乗り直し（PHRASES.handoffReintro）。収録するまでは音声合成で読む
+  "p1_handoff_reintro.mp3",
+]);
 
 /** 収録済みの発話を1区間にする。未収録なら録音を付けない（音声合成で読む）。 */
 export function clip(line: VoiceLine): SpeechSegment {

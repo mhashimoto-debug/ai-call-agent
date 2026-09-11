@@ -1043,6 +1043,11 @@
       file: "b_purpose_followup.mp3",
       text: "\u306F\u3044\u3001\u5FA1\u793E\u306E\u73FE\u5728\u306E\u5236\u5EA6\u5C0E\u5165\u72B6\u6CC1\u306B\u3064\u3044\u3066\u306E\u7C21\u5358\u306A\u78BA\u8A8D\u3067\u3054\u3056\u3044\u307E\u3059\u3002\u6050\u308C\u5165\u308A\u307E\u3059\u304C\u3001\u3054\u62C5\u5F53\u8005\u69D8\u306B\u304A\u7E4B\u304E\u3044\u305F\u3060\u3051\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F"
     },
+    // ---- 取次ぎ後（代わって出た担当者への名乗り直し） ----
+    handoffReintro: {
+      file: "p1_handoff_reintro.mp3",
+      text: "\u304A\u96FB\u8A71\u4EE3\u308F\u3063\u3066\u3044\u305F\u3060\u304D\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059\uFF01\u79C1\u3001\u4F01\u696D\u578B\u78BA\u5B9A\u62E0\u51FA\u5E74\u91D1\u76F8\u8AC7\u30BB\u30F3\u30BF\u30FC\u3068\u7533\u3057\u307E\u3059\u30022026\u5E7412\u6708\u306E\u6CD5\u6539\u6B63\u306E\u4EF6\u3067\u3054\u9023\u7D61\u3044\u305F\u3057\u307E\u3057\u305F\u3002"
+    },
     // ---- ガードレールの切り返し ----
     r5PublicBody: {
       file: "r5_public_body.mp3",
@@ -1170,7 +1175,10 @@
     recapDocument: { file: "recap_r4_document.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" },
     recapAbsent: { file: "recap_r7_absent.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" }
   };
-  var UNRECORDED = /* @__PURE__ */ new Set([]);
+  var UNRECORDED = /* @__PURE__ */ new Set([
+    // 取次ぎ後の名乗り直し（PHRASES.handoffReintro）。収録するまでは音声合成で読む
+    "p1_handoff_reintro.mp3"
+  ]);
   function clip(line) {
     return UNRECORDED.has(line.file) ? { text: line.text } : { text: line.text, audioFile: audioUrl(line.file) };
   }
@@ -1213,6 +1221,10 @@
   var NO = /(いいえ|いえいえ|いや|結構です(?!よ)|けっこうです|いりません|要りません|必要ありませ|必要ない|不要|遠慮|間に合って|やめ|やらない|やりません|しません|やめておき|興味(は|が)?(ない|ありませ)|関心(は|が)?(ない|ありませ)|見送|お断り|断りし|だめ|ダメ|駄目)/;
   var ASK_PURPOSE = /(ご用件|用件|ご用|どういった|どういう|どのような|どんな|なんの|何の|なんでしょ|どちら様|どちらさま|どなた|失礼ですが|どこの|お名前|会社名|目的|なにか|何か)(です|でしょ|ですか|ますか|かしら)?/;
   var TRANSFER = /(お待ち|少々|少し待|代わり|かわり|変わり|繋ぎ|つなぎ|お繋ぎ|呼んで|呼びま|確認しま|担当に|本人に|代表に|社長に|今呼び|まいります)/;
+  var HOLD = /((少々|少し|しばらく|ちょっと)[^。]{0,4}(お待ち|待って(ください|もらえ|いただけ|て))|お待ち(ください|いただけ|頂け|願え)|(代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り)|確認して(まいり|参り|きます))/;
+  var HANDOFF_VERB = /((代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り))/;
+  var TOOK_OVER = /(代わ|かわ|替わ)りました/;
+  var HOLD_OVER = /お待たせ/;
   var REFUSE_SALES = /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
   var SCHEDULE_NG = /(都合が悪|都合つか|都合がつか|予定が入って|埋まって|ふさがって|塞がって|空いて(ない|いない|ませ)|厳しい|難しい|無理です|無理かな|出張(で|が|に)|休みで|定休|別の日|他の日|ほかの日|再来週|変更|ずらし|遅らせ|もう少し先)/;
   var SCHEDULE_OK = /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解|調整し|都合つけ|押さえて|空けておき|みてみます)/;
@@ -1394,6 +1406,15 @@
     refusalStreak = 0;
     /** 直前に流した収録台本。言い直しはフェーズではなくこれを基準にする。 */
     lastLine = null;
+    /** 相手が保留中か（保留中は AI は喋らない）。 */
+    holding = null;
+    /** 本人・担当者と話していると分かっているか。受付の保留（取次ぎ）と、本人の保留を切り分ける。 */
+    personOnLine = false;
+    /**
+     * 代わって出た担当者に、まだ概要を伝えていないか。
+     * 受付に概要を伝えたあとで取次がれた場合、担当者は用件を聞いていないので伝え直す。
+     */
+    briefingOwed = false;
     /** 架電開始の第一声。 */
     greeting() {
       return this.say("greeting", "P0", [], "\u67B6\u96FB\u958B\u59CB");
@@ -1416,6 +1437,9 @@
           collected = "headcount";
         }
       }
+      if (this.isHold(text, fired)) return this.hold(text, fired);
+      const resumed = this.holding;
+      this.holding = null;
       if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
@@ -1441,6 +1465,12 @@
       if (this.isDecline(text)) {
         this.refusalStreak++;
         return this.handleDecline(fired);
+      }
+      if (this.isArrival(text, resumed)) {
+        return this.reintroduce(
+          fired,
+          resumed === "transfer" ? "\u53D6\u6B21\u304E\u306E\u4FDD\u7559\u304C\u660E\u3051\u3066\u62C5\u5F53\u8005\u304C\u5FDC\u7B54 \u2192 \u540D\u4E57\u308A\u76F4\u3057\u3066\u7528\u4EF6\u3092\u4F1D\u3048\u308B" : "\u62C5\u5F53\u8005\u304C\u96FB\u8A71\u3092\u4EE3\u308F\u3063\u305F \u2192 \u540D\u4E57\u308A\u76F4\u3057\u3066\u7528\u4EF6\u3092\u4F1D\u3048\u308B"
+        );
       }
       switch (this.state.phase) {
         case "P0":
@@ -1612,6 +1642,7 @@
       }
       if (SELF_IDENTIFIED.test(text)) {
         this.unknownStreak = 0;
+        this.personOnLine = true;
         return this.say("overview", "P1", fired, "\u672C\u4EBA\u304C\u5FDC\u7B54\uFF08\u53D7\u4ED8\u7A81\u7834\uFF09 \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981");
       }
       if (YES.test(text) || ANSWERED_CALL.test(text)) {
@@ -1621,7 +1652,8 @@
       return this.repair(fired, "\u53D7\u4ED8\u306E\u53CD\u5FDC\u3092\u5224\u5B9A\u3067\u304D\u305A");
     }
     p1(text, fired) {
-      if (!this.said.has("overview")) {
+      if (!this.said.has("overview") || this.briefingOwed) {
+        this.briefingOwed = false;
         return this.say("overview", "P1", fired, "\u62C5\u5F53\u8005\u63A5\u7D9A \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981");
       }
       this.unknownStreak = 0;
@@ -1912,6 +1944,9 @@
      * どちらも取れないまま長引く場合は粘らずに終話する。
      */
     absentFollowUp(text, fired) {
+      if (TOOK_OVER.test(text) || HOLD_OVER.test(text)) {
+        return this.reintroduce(fired, "\u4E0D\u5728\u304B\u3089\u62C5\u5F53\u8005\u306B\u4EE3\u308F\u3063\u305F \u2192 \u540D\u4E57\u308A\u76F4\u3057\u3066\u7528\u4EF6\u3092\u4F1D\u3048\u308B");
+      }
       if (TRANSFER.test(text)) {
         this.absentMode = false;
         this.absentTurns = 0;
@@ -1954,6 +1989,62 @@
         );
       }
       return this.say("reject", this.toPhase("P0X"), fired, "\u4E0D\u5728: \u78BA\u8A8D\u304C\u53D6\u308C\u306A\u3044\u305F\u3081\u7C98\u3089\u305A\u7D42\u8A71");
+    }
+    // ---------- 取次ぎ（保留 → 担当者が電話口に出る） ----------
+    /**
+     * 保留の合図かどうか。
+     * 取次ぎ先・用件を尋ねられている場合や、誤認（R5）を口にしている場合は黙らずに答える。
+     */
+    isHold(text, fired) {
+      if (!HOLD.test(text) || TOOK_OVER.test(text) || HOLD_OVER.test(text)) return false;
+      return !this.isContactGuard(text) && !ASK_PURPOSE.test(text) && !fired.includes("R5");
+    }
+    /**
+     * 保留中は何も言わずに待つ。
+     * 受付の段階（P0/P1）の保留は取次ぎとみなし、明けたら名乗り直す。
+     * 本人と話している最中の保留は、「担当に代わります」のように人が替わる場合だけ取次ぎとみなす。
+     */
+    hold(text, fired) {
+      const reception = this.state.phase === "P0" || this.state.phase === "P1";
+      const transfer2 = reception && (!this.personOnLine || HANDOFF_VERB.test(text));
+      this.holding = transfer2 ? "transfer" : "check";
+      this.unknownStreak = 0;
+      if (transfer2) this.absentMode = false;
+      return {
+        utterance: "",
+        phase: this.state.phase,
+        guardrails: fired,
+        matched: transfer2 ? "\u53D6\u6B21\u304E\u306E\u4FDD\u7559 \u2192 \u62C5\u5F53\u8005\u304C\u51FA\u308B\u307E\u3067\u767A\u8A71\u305B\u305A\u306B\u5F85\u3064" : "\u4FDD\u7559 \u2192 \u76F8\u624B\u304C\u623B\u308B\u307E\u3067\u767A\u8A71\u305B\u305A\u306B\u5F85\u3064",
+        blocked: [],
+        segments: [],
+        holding: true
+      };
+    }
+    /**
+     * 担当者が電話口に出た直後か。
+     * 取次ぎの保留が明けた最初の発話は、名乗りの有無にかかわらず担当者のものとみなす。
+     * 保留の合図が聞き取れていなくても、「お電話代わりました」は担当者の第一声とみなす。
+     * 受付の段階（P0/P1）だけを見る。
+     */
+    isArrival(text, resumed) {
+      const phase = this.state.phase;
+      if (phase !== "P0" && phase !== "P1") return false;
+      if (REFUSE_SALES.test(text)) return false;
+      if (resumed === "transfer" || TOOK_OVER.test(text)) return true;
+      return resumed === null && !this.personOnLine && HOLD_OVER.test(text);
+    }
+    /**
+     * 代わって出た担当者への第一声。
+     * 受付に名乗った内容は担当者に届いていないので、いきなりヒアリングに入らず、
+     * 名乗り直して用件を一言伝える。概要は相手の返事を受けてから P1 で伝える。
+     */
+    reintroduce(fired, matched) {
+      this.personOnLine = true;
+      this.absentMode = false;
+      this.absentTurns = 0;
+      this.unknownStreak = 0;
+      this.briefingOwed = this.said.has("overview");
+      return this.speakPhrases(["handoffReintro"], this.toPhase("P1"), fired, matched);
     }
     // ---------- 受付ガード（担当者名の確認・取次ぎ先不明） ----------
     /**
@@ -2886,6 +2977,12 @@
       scrollToActive(custNode);
       await pause(200);
       const r = dialog.respond(text);
+      if (r.holding) {
+        pushFlag(`\u5224\u5B9A: ${r.matched}`);
+        logLine("\u30B7\u30B9\u30C6\u30E0", r.matched);
+        renderAll();
+        return;
+      }
       if (r.overrideReason) pushFlag(`\u26A0 \u9077\u79FB\u3092\u5374\u4E0B: ${r.overrideReason}`);
       if (r.blocked.length > 0) {
         pushFlag(
