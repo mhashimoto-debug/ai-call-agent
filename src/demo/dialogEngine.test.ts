@@ -376,7 +376,7 @@ test("P8 HP参照: 番号もホームページのでと言われたら、切り�
   assert.doesNotMatch(second.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${second.matched}`);
   assert.equal(state.callbackPhone, HP_NUMBER_LABEL);
   // 打診は繰り返さず、承諾の一言を添えて次の確認へ進む
-  assert.equal(second.utterance, `${PHRASES.hpAck.text}${PHRASES.askCallbackWindow.text}`);
+  assert.equal(second.utterance, `${PHRASES.r7Ack.text}${PHRASES.askCallbackWindow.text}`);
   assert.equal(state.ended, false);
 });
 
@@ -384,41 +384,59 @@ test("P8 HP参照: 番号もホームページのでと言われたら、切り�
 
 const segTexts = (r: DialogReply): string[] => r.segments.map((s) => s.text);
 
+/** 前置き＋最初の質問（受け止め → 「念のため確認させてください。」→ H1）を鳴らす録音。 */
+const CUSHION_H1_FILES = [`${AUDIO_BASE}r7_ack.mp3`, `${AUDIO_BASE}p8_reask_3.mp3`, `${AUDIO_BASE}p8_h1_ideco.mp3`];
+
+/** すべての区間に録音が付いていること（音声合成に落ちない）。 */
+function assertFullyRecorded(r: DialogReply, label: string): void {
+  for (const s of r.segments) {
+    assert.ok(s.audioFile, `${label}: 「${s.text}」が録音ではなく音声合成で読まれる`);
+  }
+}
+
 test("P8完了/HP参照後に前置きメッセージを経てから H1 質問へ進む", () => {
-  // 連絡先の確認を終えたら、いきなり H1 を聞かずに前置き（許可取得）を挟む
+  // 連絡先の確認を終えたら、いきなり H1 を聞かずに前置きを挟む
   const { state, dialog } = fresh();
   state.phase = "P7";
   dialog.respond("はい、その時間で大丈夫です"); // → 連絡先の確認
-  const cushion = dialog.respond("090-1234-5678 です");
-  assert.deepEqual(segTexts(cushion), [PHRASES.r7Ack.text, PHRASES.hearingCushion.text]);
-  assert.match(cushion.utterance, /^承知いたしました。では当日のご案内の参考にさせていただきたく/);
-  assert.doesNotMatch(cushion.utterance, /iDeCo/, "前置きなしで H1 を聞いている");
-  assert.equal(cushion.phase, "P8");
-  assert.equal(dialog.respond("はい、どうぞ").utterance, PHRASES.askH1.text, "前置きのあとに H1 へ進まない");
+  const r = dialog.respond("090-1234-5678 です");
+  assert.equal(r.utterance, "承知いたしました。念のため確認させてください。現在 iDeCo やその他の投資はされていますか？");
+  assert.deepEqual(segTexts(r), [PHRASES.r7Ack.text, PHRASES.reask3.text, PHRASES.askH1.text]);
+  assert.deepEqual(audioFiles(r.segments), CUSHION_H1_FILES);
+  assertFullyRecorded(r, "連絡先→H1");
+  assert.equal(r.phase, "P8");
 
-  // HP参照から入る場合は、承諾の一言 → 前置き → H1 の順。日程の打診には戻らない
+  // HP参照から入る場合も、承諾の一言 → 前置き → H1 の順。日程の打診には戻らない
   const hp = fresh();
   hp.state.phase = "P7";
   hp.dialog.respond("はい、その時間で大丈夫です");
   const ack = hp.dialog.respond("ホームページに載ってるので");
-  assert.deepEqual(segTexts(ack), [PHRASES.hpAck.text, PHRASES.hearingCushion.text]);
-  assert.match(ack.utterance, /^承知いたしました！では弊社にてサイトより確認させていただきますね。/);
-  assert.doesNotMatch(ack.utterance, /iDeCo/, "承諾の一言のあと前置きなしで H1 を聞いている");
+  assert.deepEqual(segTexts(ack), [PHRASES.r7Ack.text, PHRASES.reask3.text, PHRASES.askH1.text]);
+  assert.deepEqual(audioFiles(ack.segments), CUSHION_H1_FILES);
+  assertFullyRecorded(ack, "HP参照→H1");
   assert.notEqual(ack.utterance, PHRASES.hpReference.text, "詳細ヒアリングの前に日程の打診へ戻っている");
   assert.equal(ack.phase, "P8");
   assert.equal(hp.state.email, HP_ADDRESS_LABEL);
-  assert.equal(hp.dialog.respond("はい").utterance, PHRASES.askH1.text);
 });
 
-test("P8 前置き: 渋られてもお詫びを添えて最初の質問だけ伺い、前置きは1回しか挟まない", () => {
+test("P8 前置き: 受け止めの言葉が違っても、前置き＋最初の質問はすべて録音で鳴らす", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  applyExtracted(state, { email: "nakamura@example.co.jp", email_confirmed: true });
+  dialog.respond("はい、その時間で大丈夫です");
+  const r = dialog.respond("この番号でいいです");
+  assert.deepEqual(segTexts(r), [PHRASES.currentNumberAck.text, PHRASES.reask3.text, PHRASES.askH1.text]);
+  assertFullyRecorded(r, "発信番号→H1");
+});
+
+test("P8 前置き: 前置きは1回しか挟まない", () => {
   const { state, dialog } = fresh();
   state.phase = "P7";
   dialog.respond("はい、その時間で大丈夫です");
-  dialog.respond("090-1234-5678 です"); // → 前置き
-  const first = dialog.respond("いや、ちょっと…");
-  assert.deepEqual(segTexts(first), [PHRASES.reask2.text, PHRASES.askH1.text]);
+  dialog.respond("090-1234-5678 です"); // → 前置き＋H1
   const next = dialog.respond("やってないです");
   assert.deepEqual(segTexts(next), [PHRASES.askH2.text], "前置きを繰り返している");
+  assertFullyRecorded(next, "H2");
 });
 
 // ---------- 想定外発話のフォールバック ----------

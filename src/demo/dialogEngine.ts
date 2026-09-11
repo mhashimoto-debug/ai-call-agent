@@ -466,7 +466,7 @@ const REASK_PREFIX: PhraseId[] = ["reask1", "reask2", "reask3"];
 const EARLY_PHASES = new Set<PhaseId>(["P0", "P1"]);
 
 /** P8 で今どのスロットを聞いているか。 */
-type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow" | "hearingConsent";
+type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow";
 
 /** 詳細ヒアリング（H1〜H7）の項目か。 */
 const isHearingSlot = (slot: PendingSlot | null): slot is HearingId => slot !== null && /^H[1-7]$/.test(slot);
@@ -483,7 +483,6 @@ const SLOT_QUESTION: Record<Exclude<PendingSlot, "emailConfirm">, PhraseId> = {
   email: "askEmail",
   callbackPhone: "askCallbackPhone",
   callbackWindow: "askCallbackWindow",
-  hearingConsent: "hearingCushion",
 };
 
 /** 発話の部品。PHRASES の短い発話か、差し込み（メールアドレス・時刻など）の区間。 */
@@ -537,7 +536,7 @@ export class DialogEngine {
   private meetingOfferedAt = -1;
   /** P8 から HP 参照の切り返しで日程調整（P7）へ戻したか。承諾されたら P8 の残りから再開する。 */
   private resumeP8 = false;
-  /** 詳細ヒアリング（H1〜）の前置き（許可取得）を済ませたか。1通話1回だけ挟む。 */
+  /** 詳細ヒアリング（H1〜）へ移るときの前置きを済ませたか。1通話1回だけ挟む。 */
   private hearingCushioned = false;
   /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
   private publicBodyCorrected = false;
@@ -1036,8 +1035,6 @@ export class DialogEngine {
   // ---------- P8: ヒアリング7項目 ----------
 
   private p8(text: string, fired: GuardrailId[]): DialogReply {
-    // 詳細ヒアリングの前置き（許可取得）への返事。答えの中身は問わず、最初の質問へ進む
-    if (this.pending === "hearingConsent") return this.afterHearingConsent(text, fired);
     const notes: string[] = [];
     if (this.harvested.length > 0) {
       notes.push(`まとめ聞きで ${this.harvested.join("・")} を同時取得`);
@@ -1099,16 +1096,17 @@ export class DialogEngine {
         `${notes.join(" / ") || "取得完了"} → 7項目＋連絡先が揃ったので締め(P9)`,
       );
     }
-    // 連絡先の確認から詳細ヒアリングへ移るときは、いきなり質問せず前置き（許可取得）を挟む。
-    // 受け止めの一言がなければ「承知いたしました。」を添える。前置きへの返事を受けてから最初の質問に進む
+    // 連絡先の確認から詳細ヒアリングへ移るときは、いきなり質問せず前置きを挟む（1通話1回）。
+    // 受け止めの一言（なければ「承知いたしました。」）＋「念のため確認させてください。」＋最初の質問を、
+    // すべて収録済みの音源の連続再生で組み立てる（音声合成に落とさない）
     if (isHearingSlot(nextSlot) && !this.hearingCushioned) {
       this.hearingCushioned = true;
-      this.pending = "hearingConsent";
+      this.pending = nextSlot;
       return this.speakPhrases(
-        [...(leadParts.length > 0 ? leadParts : (["r7Ack"] as Part[])), "hearingCushion"],
+        [...(leadParts.length > 0 ? leadParts : (["r7Ack"] as Part[])), "reask3", ...this.askParts(nextSlot)],
         "P8",
         fired,
-        `${notes.length > 0 ? notes.join(" / ") + " → " : ""}詳細ヒアリングの前に前置き（許可取得）`,
+        `${notes.length > 0 ? notes.join(" / ") + " → " : ""}前置きを挟んで ${nextSlot} へ`,
       );
     }
     this.pending = nextSlot;
@@ -1162,8 +1160,8 @@ export class DialogEngine {
    * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
    * 指定された連絡先はこちらでサイトから確認するものとして確定する（読み上げる文字列が無いので復唱も済みとする）。
    *
-   * この後に詳細ヒアリングへ入る場合は、承諾の一言（「サイトより確認させていただきますね」）→
-   * 前置き（許可取得）→ 最初の質問の順に進め、唐突に質問を始めない。
+   * この後に詳細ヒアリングへ入る場合は、承諾の一言（「承知いたしました。」）→
+   * 前置き（「念のため確認させてください。」）→ 最初の質問の順に進め、唐突に質問を始めない。
    * それ以外は HP参照の切り返し（r_hp_reference）を流して日程調整（P7）へ戻し、承諾されたら P8 の残りから再開する。
    * 切り返しは1通話1回まで。すでに流していれば流し直さず、承諾の一言から残りの確認事項へ進める。
    */
@@ -1182,7 +1180,7 @@ export class DialogEngine {
     // （meetingOfferedAt は HP 参照の切り返しを流したときにだけ入る）
     const intoHearing = isHearingSlot(this.nextSlot()) && !this.hearingCushioned;
     if (intoHearing || this.meetingOfferedAt >= 0) {
-      return this.advanceP8([`${note} → 承諾の一言から続ける`], fired, "hpAck");
+      return this.advanceP8([`${note} → 承諾の一言から続ける`], fired, "r7Ack");
     }
     this.meetingOfferedAt = this.state.turns.length;
     this.resumeP8 = true;
@@ -1193,20 +1191,6 @@ export class DialogEngine {
       `${note} → 聞き直さずHP参照の切り返しを流し、日程調整(P7)へ戻る`,
     );
   }
-
-  /**
-   * 詳細ヒアリングの前置き（「1、2点お伺いしてもよろしいでしょうか？」）への返事を受ける。
-   * 渋られても、ヒアリングは全項目の取得が前提なので、お詫びを添えて最初の1問だけ伺う。
-   */
-  private afterHearingConsent(text: string, fired: GuardrailId[]): DialogReply {
-    this.pending = null;
-    this.unknownStreak = 0;
-    const reluctant = NO.test(text) && !YES.test(text);
-    const notes = this.harvested.length > 0 ? [`まとめ聞きで ${this.harvested.join("・")} を同時取得`] : [];
-    notes.push(reluctant ? "前置きへの返事が消極的 → お詫びを添えて伺う" : "前置きへの承諾");
-    return this.advanceP8(notes, fired, reluctant ? "reask2" : undefined);
-  }
-
   /** そのスロットがすでに埋まっているか。 */
   private isFilled(slot: PendingSlot): boolean {
     switch (slot) {
@@ -1218,8 +1202,6 @@ export class DialogEngine {
         return Boolean(this.state.callbackPhone);
       case "callbackWindow":
         return Boolean(this.state.callbackWindow);
-      case "hearingConsent":
-        return false;
       default:
         return Boolean(this.state.hearing[slot]);
     }
@@ -1299,8 +1281,6 @@ export class DialogEngine {
       }
       case "callbackWindow":
         return { facts: { callback_window: text }, ok: /(午前|午後|朝|昼|夕方|夜|時|いつでも)/.test(text) };
-      case "hearingConsent":
-        return { facts: {}, ok: true };
     }
   }
 

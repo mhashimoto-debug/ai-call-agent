@@ -157,12 +157,6 @@ export const PHRASES = {
     text: `承知いたしました！では弊社にてサイトより確認させていただきますね。差し支えなければ、${sc.contactTitle}様と一度30分ほどオンラインでご挨拶だけでもお時間いただけないでしょうか？`,
   },
 
-  /** HP 参照の切り返しの前半（承諾の一言）。P8 で日程の打診を挟まずに続けるときに使う */
-  hpAck: {
-    file: "r_hp_ack.mp3",
-    text: "承知いたしました！では弊社にてサイトより確認させていただきますね。",
-  },
-
   // ---- R7 不在（{戻り時間} を挟むものは前後で分けて収録する） ----
   r7AskReturnTime: {
     file: "r7_ask_return_time.mp3",
@@ -172,7 +166,10 @@ export const PHRASES = {
     file: "r7_ask_contact.mp3",
     text: "恐れ入ります、ご担当者様のお電話番号かメールアドレスだけ伺えますでしょうか？",
   },
-  /** 「承知いたしました。」＋{戻り時間}頃に＋r7CallbackAskContact */
+  /**
+   * 「承知いたしました。」＋{戻り時間}頃に＋r7CallbackAskContact。
+   * P8 で詳細ヒアリングへ移るときの受け止め（＋reask3＋最初の質問）にも使う
+   */
   r7Ack: { file: "r7_ack.mp3", text: "承知いたしました。" },
   r7CallbackAskContact: {
     file: "r7_callback_ask_contact.mp3",
@@ -200,14 +197,6 @@ export const PHRASES = {
   noTravel: { file: "p7_no_travel.mp3", text: "オンラインですので、ご移動やご来社は不要でございます。" },
 
   // ---- P8 ヒアリング（未取得の項目を上から順に聞く） ----
-  /**
-   * 連絡先の確認から詳細ヒアリング（H1〜）へ移るときの前置き（許可取得）。
-   * 受け止めの一言（r7Ack「承知いたしました。」・hpAck など）の後に続けて流す。
-   */
-  hearingCushion: {
-    file: "p8_hearing_cushion.mp3",
-    text: "では当日のご案内の参考にさせていただきたく、事前に差し支えない範囲で1、2点お伺いしてもよろしいでしょうか？",
-  },
   askH1: { file: "p8_h1_ideco.mp3", text: hearingQuestion("H1") },
   askH2: { file: "p8_h2_retirement.mp3", text: hearingQuestion("H2") },
   askH3: { file: "p8_h3_age.mp3", text: hearingQuestion("H3") },
@@ -246,6 +235,7 @@ export const PHRASES = {
    */
   reask1: { file: "p8_reask_1.mp3", text: "恐れ入ります、もう一度お伺いできますでしょうか。" },
   reask2: { file: "p8_reask_2.mp3", text: "お手数をおかけいたします。" },
+  /** 詳細ヒアリングへ移るときの前置き（受け止めの一言と最初の質問の間）にも使う */
   reask3: { file: "p8_reask_3.mp3", text: "念のため確認させてください。" },
 
   // ---- 終話 ----
@@ -302,12 +292,7 @@ export type PhraseId = keyof typeof PHRASES;
  * 収録したら public/audio/ に置き、ここから外す。
  * 置いたのに外し忘れていると npm test が落ちて知らせる（逆も同じ）。
  */
-export const UNRECORDED: ReadonlySet<string> = new Set<string>([
-  // HP 参照の承諾の一言（PHRASES.hpAck）。r_hp_reference.mp3 の前半と同じ文言
-  "r_hp_ack.mp3",
-  // 詳細ヒアリングの前置き（PHRASES.hearingCushion）
-  "p8_hearing_cushion.mp3",
-]);
+export const UNRECORDED: ReadonlySet<string> = new Set<string>([]);
 
 /** 収録済みの発話を1区間にする。未収録なら録音を付けない（音声合成で読む）。 */
 export function clip(line: VoiceLine): SpeechSegment {
