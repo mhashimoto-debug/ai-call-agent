@@ -92,6 +92,12 @@ test("日本語どうしの間の空白は詰める（不自然な間を作ら�
   );
 });
 
+test("ユーザー名が日本語の説明のアドレス（会社名@gmail.com）も記号を読み下す", () => {
+  const out = speechText("会社名@gmail.com でお間違いないでしょうか？");
+  assert.doesNotMatch(out, /@/);
+  assert.match(out, /会社名アットマーク gmail ドットコム/);
+});
+
 test("メールの読み下しでは区切りの空白を残す", () => {
   const out = speechText("nakamura@sample-kogyo.co.jp です。");
   assert.match(out, /アットマーク sample/);

@@ -350,6 +350,70 @@ const PUBLIC_BODY_CONFUSION =
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 const PHONE_RE = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
+
+/**
+ * 口頭のメールアドレス表現を記号・英字に寄せる（「アットマーク」→「@」、「ジーメール ドット コム」→「gmail.com」）。
+ * 音声認識は記号やドメインをカタカナで返すことが多いため。長い言い方を先に並べる。
+ */
+const SPOKEN_EMAIL: [RegExp, string][] = [
+  [/アットマーク|あっとまーく|アット|あっと/g, "@"],
+  [/ドット|どっと/g, "."],
+  [/ハイフン|はいふん/g, "-"],
+  [/アンダーバー|アンダースコア/g, "_"],
+  [/ジーメール|じーめーる|Gメール/gi, "gmail"],
+  [/ヤフー|やふー/g, "yahoo"],
+  [/アウトルック/g, "outlook"],
+  [/ホットメール/g, "hotmail"],
+  [/アイクラウド/g, "icloud"],
+  [/シーオー/g, "co"],
+  [/ジェーピー|ジェイピー/g, "jp"],
+  [/コム/g, "com"],
+  [/ネット/g, "net"],
+];
+
+/** @ 以降のドメイン部分。 */
+const EMAIL_DOMAIN = /@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/;
+
+/** ユーザー名の説明の前に付く前置き（「メールは」「アドレスが」）。 */
+const LOCAL_HEAD =
+  /^(?:(?:はい|ええ|えーと|えっと|あの)[、,]?)*(?:(?:メールアドレス|メール|アドレス)(?:は|が|ですが|ですけど|なんですけど)?)?/;
+
+/** ユーザー名の説明の後ろ、@ の前に付く言い回し（「会社名の後に@」「社名のアットマーク」）。 */
+const LOCAL_TAIL = /(?:の後ろに|のうしろに|の後に|のあとに|の後|のあと|の|に|で|が|を|は)+$/;
+
+export interface SpokenEmail {
+  /** 格納するアドレス。ユーザー名が日本語の説明（「会社名」）のときは、説明のまま @ の前に置く */
+  address: string;
+  /** ユーザー名が英字で取れなかった（「会社名の後に@gmail.com」）。復唱で確認してもらう */
+  partial: boolean;
+}
+
+/**
+ * 発話からメールアドレスを拾う。
+ * 1. そのままのアドレス（tanaka@example.com。全角も可）
+ * 2. 口頭の表現（「tanaka アットマーク ジーメール ドット コム」）
+ * 3. ドメインだけ英字で分かる言い方（「会社名の後に@gmail.com」「社名のアットマークgmail.com」）
+ *    → ユーザー名の説明を残して「会社名@gmail.com」として受け取る。取得失敗にすると聞き直しから抜けられない
+ */
+export function extractEmail(text: string): SpokenEmail | null {
+  const compact = text.normalize("NFKC").replace(/\s/g, "");
+  const direct = EMAIL_RE.exec(compact)?.[0];
+  if (direct) return { address: direct, partial: false };
+
+  let spoken = compact;
+  for (const [pattern, to] of SPOKEN_EMAIL) spoken = spoken.replace(pattern, to);
+  const full = EMAIL_RE.exec(spoken)?.[0];
+  if (full) return { address: full, partial: false };
+
+  const domain = EMAIL_DOMAIN.exec(spoken);
+  if (!domain?.[1]) return null;
+  // @ の直前の区切り（句読点）以降だけを見て、前置きと「の後に」を落とす
+  const before = spoken.slice(0, domain.index).split(/[。、,]/).pop() ?? "";
+  const local = before.replace(LOCAL_HEAD, "").replace(LOCAL_TAIL, "");
+  // 「sample-kogyoの後に@gmail.com」のようにユーザー名が英字なら、そのまま完全なアドレスになる
+  if (/^[A-Za-z0-9._%+-]+$/.test(local)) return { address: `${local}@${domain[1]}`, partial: false };
+  return { address: `${local}@${domain[1]}`, partial: true };
+}
 const COUNT_RE = /(\d+|[〇一二三四五六七八九十]{1,4})\s*(名|人)/;
 const AGE_RE = /(\d{1,3})\s*(歳|才)|(?:今年で|年齢は)\s*(\d{1,3})/;
 const MONTH_RE = /(\d{1,2}|[一二三四五六七八九十]{1,3})\s*月/;
@@ -444,7 +508,7 @@ export function bulkExtract(text: string): BulkFacts {
   if (age !== null && age >= 18 && age <= 99) facts.age = age;
   // 新台本は「決算月とメールアドレス」「電話番号またはメールアドレス」をまとめて聞くため、
   // 連絡先もこの場で拾えるようにしておく
-  const email = EMAIL_RE.exec(text.replace(/\s/g, ""))?.[0];
+  const email = extractEmail(text)?.address;
   const phone = PHONE_RE.exec(text.replace(/\s/g, ""))?.[0];
   if (email) facts.email = email;
   if (phone) facts.phone = phone;
@@ -607,7 +671,10 @@ export class DialogEngine {
     if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
     // P8 で「ホームページのアドレスで」と言われたら、聞き取り失敗として聞き直さない
     // （アドレスの文字列が出てこないので、聞き直しを続けると抜けられなくなる）
-    if (this.askingContactInP8() && isHpAddress(text)) return this.acceptHpAddress(text, fired);
+    // ただしアドレスそのもの（「〜アット nifty ドットネットでお願いします」）を言っている場合は HP 参照ではない
+    if (this.askingContactInP8() && isHpAddress(text) && !extractEmail(text)) {
+      return this.acceptHpAddress(text, fired);
+    }
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
@@ -949,7 +1016,7 @@ export class DialogEngine {
         got.push("H7");
       }
     }
-    if (this.state.email && !got.includes("email") && EMAIL_RE.test(text.replace(/\s/g, ""))) {
+    if (this.state.email && !got.includes("email") && extractEmail(text)) {
       got.push("email");
     }
 
@@ -1038,6 +1105,21 @@ export class DialogEngine {
     const notes: string[] = [];
     if (this.harvested.length > 0) {
       notes.push(`まとめ聞きで ${this.harvested.join("・")} を同時取得`);
+    }
+    const spokenEmail = extractEmail(text);
+
+    // 復唱したアドレスを言い直された（「いえ、sample@gmail.com です」）ら、新しいアドレスで復唱し直す
+    if (this.pending === "emailConfirm" && spokenEmail && spokenEmail.address !== this.state.email) {
+      applyExtracted(this.state, { email: spokenEmail.address });
+      return this.speakPhrases(
+        this.askParts("emailConfirm"),
+        "P8",
+        fired,
+        "復唱したアドレスを訂正された → 新しいアドレスで復唱し直す",
+      );
+    }
+    if (spokenEmail?.partial && this.state.email === spokenEmail.address) {
+      notes.push(`メールアドレスをドメインで取得（${spokenEmail.address}。ユーザー名は復唱で確認）`);
     }
 
     if (this.pending) {
@@ -1270,8 +1352,8 @@ export class DialogEngine {
         return { facts: { H7: month !== null ? `${month}月` : text }, ok: month !== null };
       }
       case "email": {
-        const m = EMAIL_RE.exec(text.replace(/\s/g, ""));
-        return { facts: { email: m?.[0] ?? null }, ok: Boolean(m) };
+        const found = extractEmail(text);
+        return { facts: { email: found?.address ?? null }, ok: Boolean(found) };
       }
       case "emailConfirm":
         return { facts: { email_confirmed: true }, ok: YES.test(text) && !NO.test(text) };

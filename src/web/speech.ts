@@ -64,7 +64,8 @@ export async function japaneseVoices(): Promise<SpeechSynthesisVoice[]> {
 // ---------- 読み上げテキストの正規化 ----------
 
 const WEEKDAY = /（([月火水木金土日])）/g;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// ユーザー名が日本語の説明のアドレス（「会社名@gmail.com」）も @ 以降を読み下すため、ユーザー名の英字は必須にしない
+const EMAIL = /[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PHONE = /(\d{2,4})-(\d{2,4})-(\d{3,4})/g;
 const DOMAIN_KANA: Record<string, string> = {
   co: "シーオー",

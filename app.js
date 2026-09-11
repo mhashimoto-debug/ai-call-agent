@@ -639,7 +639,7 @@
     return all.filter((v) => v.lang.toLowerCase().startsWith("ja")).sort((a, b) => scoreVoice(b) - scoreVoice(a));
   }
   var WEEKDAY = /（([月火水木金土日])）/g;
-  var EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+  var EMAIL = /[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
   var PHONE = /(\d{2,4})-(\d{2,4})-(\d{3,4})/g;
   var DOMAIN_KANA = {
     co: "\u30B7\u30FC\u30AA\u30FC",
@@ -1357,6 +1357,39 @@
   var PUBLIC_BODY_CONFUSION = /(お国|国が|国の|お役所|役所|市役所|区役所|町役場|公的|行政|官公庁|厚労省|厚生労働省|年金機構|年金事務所|社会保険事務所|商工会|商工会議所|税務署|ハローワーク|労働基準監督署|公務員|職員|担当官|補助金|助成金|給付金)/;
   var EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
   var PHONE_RE = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
+  var SPOKEN_EMAIL = [
+    [/アットマーク|あっとまーく|アット|あっと/g, "@"],
+    [/ドット|どっと/g, "."],
+    [/ハイフン|はいふん/g, "-"],
+    [/アンダーバー|アンダースコア/g, "_"],
+    [/ジーメール|じーめーる|Gメール/gi, "gmail"],
+    [/ヤフー|やふー/g, "yahoo"],
+    [/アウトルック/g, "outlook"],
+    [/ホットメール/g, "hotmail"],
+    [/アイクラウド/g, "icloud"],
+    [/シーオー/g, "co"],
+    [/ジェーピー|ジェイピー/g, "jp"],
+    [/コム/g, "com"],
+    [/ネット/g, "net"]
+  ];
+  var EMAIL_DOMAIN = /@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/;
+  var LOCAL_HEAD = /^(?:(?:はい|ええ|えーと|えっと|あの)[、,]?)*(?:(?:メールアドレス|メール|アドレス)(?:は|が|ですが|ですけど|なんですけど)?)?/;
+  var LOCAL_TAIL = /(?:の後ろに|のうしろに|の後に|のあとに|の後|のあと|の|に|で|が|を|は)+$/;
+  function extractEmail(text) {
+    const compact = text.normalize("NFKC").replace(/\s/g, "");
+    const direct = EMAIL_RE.exec(compact)?.[0];
+    if (direct) return { address: direct, partial: false };
+    let spoken = compact;
+    for (const [pattern, to] of SPOKEN_EMAIL) spoken = spoken.replace(pattern, to);
+    const full = EMAIL_RE.exec(spoken)?.[0];
+    if (full) return { address: full, partial: false };
+    const domain = EMAIL_DOMAIN.exec(spoken);
+    if (!domain?.[1]) return null;
+    const before = spoken.slice(0, domain.index).split(/[。、,]/).pop() ?? "";
+    const local = before.replace(LOCAL_HEAD, "").replace(LOCAL_TAIL, "");
+    if (/^[A-Za-z0-9._%+-]+$/.test(local)) return { address: `${local}@${domain[1]}`, partial: false };
+    return { address: `${local}@${domain[1]}`, partial: true };
+  }
   var COUNT_RE = /(\d+|[〇一二三四五六七八九十]{1,4})\s*(名|人)/;
   var AGE_RE = /(\d{1,3})\s*(歳|才)|(?:今年で|年齢は)\s*(\d{1,3})/;
   var MONTH_RE = /(\d{1,2}|[一二三四五六七八九十]{1,3})\s*月/;
@@ -1409,7 +1442,7 @@
     if (insured !== null) facts.insured = insured;
     if (month !== null && month >= 1 && month <= 12) facts.fiscalMonth = month;
     if (age !== null && age >= 18 && age <= 99) facts.age = age;
-    const email = EMAIL_RE.exec(text.replace(/\s/g, ""))?.[0];
+    const email = extractEmail(text)?.address;
     const phone = PHONE_RE.exec(text.replace(/\s/g, ""))?.[0];
     if (email) facts.email = email;
     if (phone) facts.phone = phone;
@@ -1526,7 +1559,9 @@
       const resumed = this.holding;
       this.holding = null;
       if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
-      if (this.askingContactInP8() && isHpAddress(text)) return this.acceptHpAddress(text, fired);
+      if (this.askingContactInP8() && isHpAddress(text) && !extractEmail(text)) {
+        return this.acceptHpAddress(text, fired);
+      }
       const g = this.byGuardrail(text, fired);
       if (g) return g;
       if (collected === "headcount") {
@@ -1797,7 +1832,7 @@
           got.push("H7");
         }
       }
-      if (this.state.email && !got.includes("email") && EMAIL_RE.test(text.replace(/\s/g, ""))) {
+      if (this.state.email && !got.includes("email") && extractEmail(text)) {
         got.push("email");
       }
       if (got.length === 0 && EMAIL_UNAVAILABLE.test(text) && !this.postalOffered) {
@@ -1872,6 +1907,19 @@
       const notes = [];
       if (this.harvested.length > 0) {
         notes.push(`\u307E\u3068\u3081\u805E\u304D\u3067 ${this.harvested.join("\u30FB")} \u3092\u540C\u6642\u53D6\u5F97`);
+      }
+      const spokenEmail = extractEmail(text);
+      if (this.pending === "emailConfirm" && spokenEmail && spokenEmail.address !== this.state.email) {
+        applyExtracted(this.state, { email: spokenEmail.address });
+        return this.speakPhrases(
+          this.askParts("emailConfirm"),
+          "P8",
+          fired,
+          "\u5FA9\u5531\u3057\u305F\u30A2\u30C9\u30EC\u30B9\u3092\u8A02\u6B63\u3055\u308C\u305F \u2192 \u65B0\u3057\u3044\u30A2\u30C9\u30EC\u30B9\u3067\u5FA9\u5531\u3057\u76F4\u3059"
+        );
+      }
+      if (spokenEmail?.partial && this.state.email === spokenEmail.address) {
+        notes.push(`\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u30C9\u30E1\u30A4\u30F3\u3067\u53D6\u5F97\uFF08${spokenEmail.address}\u3002\u30E6\u30FC\u30B6\u30FC\u540D\u306F\u5FA9\u5531\u3067\u78BA\u8A8D\uFF09`);
       }
       if (this.pending) {
         if (this.isFilled(this.pending)) {
@@ -2076,8 +2124,8 @@
           return { facts: { H7: month !== null ? `${month}\u6708` : text }, ok: month !== null };
         }
         case "email": {
-          const m = EMAIL_RE.exec(text.replace(/\s/g, ""));
-          return { facts: { email: m?.[0] ?? null }, ok: Boolean(m) };
+          const found = extractEmail(text);
+          return { facts: { email: found?.address ?? null }, ok: Boolean(found) };
         }
         case "emailConfirm":
           return { facts: { email_confirmed: true }, ok: YES.test(text) && !NO.test(text) };

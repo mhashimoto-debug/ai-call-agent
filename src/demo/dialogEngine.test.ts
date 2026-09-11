@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   bulkExtract,
   DialogEngine,
+  extractEmail,
   GUARDRAIL_LINE,
   HP_ADDRESS_LABEL,
   HP_NUMBER_LABEL,
@@ -437,6 +438,80 @@ test("P8 前置き: 前置きは1回しか挟まない", () => {
   const next = dialog.respond("やってないです");
   assert.deepEqual(segTexts(next), [PHRASES.askH2.text], "前置きを繰り返している");
   assertFullyRecorded(next, "H2");
+});
+
+// ---------- P8: 日本語混じりのメールアドレス指定 ----------
+
+/** 復唱の区間（前置き・アドレス・確認）。 */
+const confirmParts = (address: string): string[] => [
+  PHRASES.emailConfirmPre.text,
+  `${address} `,
+  PHRASES.emailConfirmPost.text,
+];
+
+test("P8で『会社名の後に@gmail.comです』と回答した際にメアド取得成功となりP9へ進む", () => {
+  const { state, dialog } = atEmailSlot();
+  const r = dialog.respond("会社名の後に@gmail.comです");
+  assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
+  assert.equal(state.email, "会社名@gmail.com");
+  // ユーザー名は説明のまま残し、復唱で確認してもらう
+  assert.deepEqual(segTexts(r), confirmParts("会社名@gmail.com"));
+  assert.equal(r.phase, "P8");
+
+  assert.equal(dialog.respond("はい、それで合っています").utterance, PHRASES.askCallbackWindow.text);
+  assert.equal(state.emailConfirmed, true);
+  assert.match(dialog.respond("午前中なら繋がります").utterance, /カレンダー/);
+  const closing = dialog.respond("はい、入れておきます");
+  assert.equal(closing.utterance, VOICE_LINES.closing.text);
+  assert.equal(closing.phase, "P9");
+  assert.ok(evaluateDod(state).passed, "DoD を満たしていない");
+});
+
+const SPOKEN_EMAILS: [string, string][] = [
+  ["社名のアットマークgmail.comです", "社名@gmail.com"],
+  ["会社名のあとにアットマーク ジーメール ドット コムです", "会社名@gmail.com"],
+  ["メールは会社名の後に@yahoo.co.jpです", "会社名@yahoo.co.jp"],
+  ["sample-kogyo アット gmail ドット com です", "sample-kogyo@gmail.com"],
+  ["nakamura あっと ヤフー ドット シーオー ドット ジェーピー", "nakamura@yahoo.co.jp"],
+  ["ＮＡＫＡＭＵＲＡ＠ｅｘａｍｐｌｅ．ｃｏ．ｊｐ", "NAKAMURA@example.co.jp"],
+  ["sample-kogyoの後に@gmail.comです", "sample-kogyo@gmail.com"],
+];
+
+for (const [text, expected] of SPOKEN_EMAILS) {
+  test(`P8 メール: 「${text}」をアドレスとして受け取り、聞き直さずに復唱へ進む`, () => {
+    const { state, dialog } = atEmailSlot();
+    const r = dialog.respond(text);
+    assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
+    assert.equal(state.email, expected);
+    assert.deepEqual(segTexts(r), confirmParts(expected));
+  });
+}
+
+test("P8 メール: 英字でユーザー名が取れたものは完全なアドレス、説明のままのものは要確認として区別する", () => {
+  assert.deepEqual(extractEmail("会社名の後に@gmail.comです"), { address: "会社名@gmail.com", partial: true });
+  assert.deepEqual(extractEmail("tanaka@example.com です"), { address: "tanaka@example.com", partial: false });
+  for (const text of ["アットホームな会社です", "ホームページのアドレスで", "インターネットで見てください", "3月です"]) {
+    assert.equal(extractEmail(text), null, `メールアドレスでない発話を拾っている: ${text}`);
+  }
+});
+
+test("P8 メール: 復唱したアドレスを言い直されたら、新しいアドレスで復唱し直す", () => {
+  const { state, dialog } = atEmailSlot();
+  dialog.respond("会社名の後に@gmail.comです"); // → 復唱
+  const again = dialog.respond("いえ、sample-kogyo@gmail.com です");
+  assert.equal(state.email, "sample-kogyo@gmail.com");
+  assert.deepEqual(segTexts(again), confirmParts("sample-kogyo@gmail.com"));
+  assert.equal(state.emailConfirmed, false);
+  dialog.respond("はい、合っています");
+  assert.equal(state.emailConfirmed, true);
+});
+
+test("P8 メール: 「〜ドットネットでお願いします」はアドレスとして受け取り、HP参照と取り違えない", () => {
+  const { state, dialog } = atEmailSlot();
+  const r = dialog.respond("nakamura アット nifty ドット ネットでお願いします");
+  assert.notEqual(r.utterance, PHRASES.hpReference.text, "HP参照として扱っている");
+  assert.equal(state.email, "nakamura@nifty.net");
+  assert.deepEqual(segTexts(r), confirmParts("nakamura@nifty.net"));
 });
 
 // ---------- 想定外発話のフォールバック ----------
