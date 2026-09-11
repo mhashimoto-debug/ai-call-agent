@@ -375,8 +375,50 @@ test("P8 HP参照: 番号もホームページのでと言われたら、切り�
   assert.notEqual(second.utterance, PHRASES.hpReference.text, "HP参照の切り返しを繰り返している");
   assert.doesNotMatch(second.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${second.matched}`);
   assert.equal(state.callbackPhone, HP_NUMBER_LABEL);
-  assert.equal(second.utterance, PHRASES.askCallbackWindow.text);
+  // 打診は繰り返さず、承諾の一言を添えて次の確認へ進む
+  assert.equal(second.utterance, `${PHRASES.hpAck.text}${PHRASES.askCallbackWindow.text}`);
   assert.equal(state.ended, false);
+});
+
+// ---------- P8: 連絡先の確認から詳細ヒアリング（H1〜）への移り方 ----------
+
+const segTexts = (r: DialogReply): string[] => r.segments.map((s) => s.text);
+
+test("P8完了/HP参照後に前置きメッセージを経てから H1 質問へ進む", () => {
+  // 連絡先の確認を終えたら、いきなり H1 を聞かずに前置き（許可取得）を挟む
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  dialog.respond("はい、その時間で大丈夫です"); // → 連絡先の確認
+  const cushion = dialog.respond("090-1234-5678 です");
+  assert.deepEqual(segTexts(cushion), [PHRASES.r7Ack.text, PHRASES.hearingCushion.text]);
+  assert.match(cushion.utterance, /^承知いたしました。では当日のご案内の参考にさせていただきたく/);
+  assert.doesNotMatch(cushion.utterance, /iDeCo/, "前置きなしで H1 を聞いている");
+  assert.equal(cushion.phase, "P8");
+  assert.equal(dialog.respond("はい、どうぞ").utterance, PHRASES.askH1.text, "前置きのあとに H1 へ進まない");
+
+  // HP参照から入る場合は、承諾の一言 → 前置き → H1 の順。日程の打診には戻らない
+  const hp = fresh();
+  hp.state.phase = "P7";
+  hp.dialog.respond("はい、その時間で大丈夫です");
+  const ack = hp.dialog.respond("ホームページに載ってるので");
+  assert.deepEqual(segTexts(ack), [PHRASES.hpAck.text, PHRASES.hearingCushion.text]);
+  assert.match(ack.utterance, /^承知いたしました！では弊社にてサイトより確認させていただきますね。/);
+  assert.doesNotMatch(ack.utterance, /iDeCo/, "承諾の一言のあと前置きなしで H1 を聞いている");
+  assert.notEqual(ack.utterance, PHRASES.hpReference.text, "詳細ヒアリングの前に日程の打診へ戻っている");
+  assert.equal(ack.phase, "P8");
+  assert.equal(hp.state.email, HP_ADDRESS_LABEL);
+  assert.equal(hp.dialog.respond("はい").utterance, PHRASES.askH1.text);
+});
+
+test("P8 前置き: 渋られてもお詫びを添えて最初の質問だけ伺い、前置きは1回しか挟まない", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  dialog.respond("はい、その時間で大丈夫です");
+  dialog.respond("090-1234-5678 です"); // → 前置き
+  const first = dialog.respond("いや、ちょっと…");
+  assert.deepEqual(segTexts(first), [PHRASES.reask2.text, PHRASES.askH1.text]);
+  const next = dialog.respond("やってないです");
+  assert.deepEqual(segTexts(next), [PHRASES.askH2.text], "前置きを繰り返している");
 });
 
 // ---------- 想定外発話のフォールバック ----------

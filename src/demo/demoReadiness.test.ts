@@ -120,7 +120,9 @@ for (const { label, opening } of A_OPENINGS) {
       ["50代で、役員2名と社員18名の20人です", VOICE_LINES.hearingFiscalEmail.text],
       ["決算は3月で、メールは nakamura@example.co.jp です", VOICE_LINES.schedule.text],
       ["はい、その時間なら大丈夫です", VOICE_LINES.contact.text],
-      ["090-1234-5678 です", /iDeCo/],
+      // 連絡先の確認から詳細ヒアリングへ移るときは、前置き（許可取得）を挟んでから H1 を聞く
+      ["090-1234-5678 です", /1、2点お伺いしてもよろしいでしょうか/],
+      ["はい、どうぞ", /iDeCo/],
       // 「特にやっていません」は制度なし(R1)の言い回しでもあるが、P8 では質問への回答として受け取る
       ["いえ、特にやっていません", /退職金制度/],
       ["特にないです", /ご判断で決められますか/],
@@ -153,7 +155,8 @@ test("デモA 正常突破: P8 で「制度はない」と答えても従業員�
   call.say("50代で、役員2名と社員18名の20人です");
   call.say("決算は3月で、メールは nakamura@example.co.jp です");
   call.say("はい、その時間なら大丈夫です");
-  call.say("090-1234-5678 です"); // → H1（iDeCo・投資）
+  call.say("090-1234-5678 です"); // → 詳細ヒアリングの前置き
+  call.say("はい、どうぞ"); // → H1（iDeCo・投資）
   for (const text of ["特にやっていません", "何もしてないです", "退職金制度はないです"]) {
     const r = call.say(text);
     assert.notEqual(r.utterance, VOICE_LINES.r1NoSystem.text, `P8 で R1 の切り返しを流している: ${r.matched}`);
@@ -375,11 +378,12 @@ test("P8で「今かけてもらってるこの番号です」と言われた場
   assert.doesNotMatch(r.matched, /callbackPhone が聞き取れず/);
   assert.equal(call.state.isCurrentNumber, true);
   assert.equal(call.state.callbackPhone, CURRENT_NUMBER_LABEL);
-  // メールアドレスは取得済みなので、受け止めてそのまま未取得のヒアリングへ進む
-  assert.equal(r.utterance, `${CURRENT_NUMBER_ACK}現在 iDeCo やその他の投資はされていますか？`);
+  // メールアドレスは取得済みなので、受け止めてから前置きを挟んで未取得のヒアリングへ進む
+  assert.equal(r.utterance, `${CURRENT_NUMBER_ACK}${PHRASES.hearingCushion.text}`);
 
   // 残りの確認を済ませれば締め(P9)まで進み、DoD も満たす
   const steps: [string, string | RegExp][] = [
+    ["はい、どうぞ", /iDeCo/],
     ["いえ、特にやっていません", /退職金制度/],
     ["特にないです", /ご判断で決められますか/],
     ["はい、私が決めます", /復唱させていただきます/],
@@ -408,7 +412,11 @@ test("デモA P8 発信番号: メールアドレス未取得なら、続けて�
 
   const next = call.say("nakamura@example.co.jp です");
   assert.equal(call.state.email, "nakamura@example.co.jp");
-  assert.match(next.utterance, /iDeCo/, `メールアドレスの次の確認へ進んでいない: ${next.matched}`);
+  assert.match(
+    next.utterance,
+    /1、2点お伺いしてもよろしいでしょうか/,
+    `メールアドレスの次の確認へ進んでいない: ${next.matched}`,
+  );
   assertHealthyA(call, "発信番号→メールアドレス");
 });
 
@@ -420,7 +428,7 @@ test("デモA P8 発信番号: 「この番号じゃなくて携帯に」は発�
 
   const r = call.say("090-1234-5678 です");
   assert.equal(call.state.callbackPhone, "090-1234-5678");
-  assert.match(r.utterance, /iDeCo/);
+  assert.match(r.utterance, /1、2点お伺いしてもよろしいでしょうか/);
 });
 
 test("デモA P8: 番号に「折り返して」と添えられても多忙(R2)と取り違えない", () => {
@@ -429,7 +437,7 @@ test("デモA P8: 番号に「折り返して」と添えられても多忙(R2)�
   assert.notEqual(r.utterance, VOICE_LINES.r2Busy.text, `多忙(R2)と取り違えている: ${r.matched}`);
   assert.equal(call.state.callbackPhone, "090-1234-5678");
   assert.equal(call.state.isCurrentNumber, false);
-  assert.match(r.utterance, /iDeCo/);
+  assert.match(r.utterance, /1、2点お伺いしてもよろしいでしょうか/);
 });
 
 test("デモA 不在: 「この番号に折り返してください」は発信番号で確定し、戻り時間を伺って終話する", () => {

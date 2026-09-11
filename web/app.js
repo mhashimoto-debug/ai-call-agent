@@ -1061,6 +1061,11 @@
       file: "r_hp_reference.mp3",
       text: `\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002\u5DEE\u3057\u652F\u3048\u306A\u3051\u308C\u3070\u3001${sc.contactTitle}\u69D8\u3068\u4E00\u5EA630\u5206\u307B\u3069\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3054\u6328\u62F6\u3060\u3051\u3067\u3082\u304A\u6642\u9593\u3044\u305F\u3060\u3051\u306A\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F`
     },
+    /** HP 参照の切り返しの前半（承諾の一言）。P8 で日程の打診を挟まずに続けるときに使う */
+    hpAck: {
+      file: "r_hp_ack.mp3",
+      text: "\u627F\u77E5\u3044\u305F\u3057\u307E\u3057\u305F\uFF01\u3067\u306F\u5F0A\u793E\u306B\u3066\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u307E\u3059\u306D\u3002"
+    },
     // ---- R7 不在（{戻り時間} を挟むものは前後で分けて収録する） ----
     r7AskReturnTime: {
       file: "r7_ask_return_time.mp3",
@@ -1095,6 +1100,14 @@
     },
     noTravel: { file: "p7_no_travel.mp3", text: "\u30AA\u30F3\u30E9\u30A4\u30F3\u3067\u3059\u306E\u3067\u3001\u3054\u79FB\u52D5\u3084\u3054\u6765\u793E\u306F\u4E0D\u8981\u3067\u3054\u3056\u3044\u307E\u3059\u3002" },
     // ---- P8 ヒアリング（未取得の項目を上から順に聞く） ----
+    /**
+     * 連絡先の確認から詳細ヒアリング（H1〜）へ移るときの前置き（許可取得）。
+     * 受け止めの一言（r7Ack「承知いたしました。」・hpAck など）の後に続けて流す。
+     */
+    hearingCushion: {
+      file: "p8_hearing_cushion.mp3",
+      text: "\u3067\u306F\u5F53\u65E5\u306E\u3054\u6848\u5185\u306E\u53C2\u8003\u306B\u3055\u305B\u3066\u3044\u305F\u3060\u304D\u305F\u304F\u3001\u4E8B\u524D\u306B\u5DEE\u3057\u652F\u3048\u306A\u3044\u7BC4\u56F2\u30671\u30012\u70B9\u304A\u4F3A\u3044\u3057\u3066\u3082\u3088\u308D\u3057\u3044\u3067\u3057\u3087\u3046\u304B\uFF1F"
+    },
     askH1: { file: "p8_h1_ideco.mp3", text: hearingQuestion("H1") },
     askH2: { file: "p8_h2_retirement.mp3", text: hearingQuestion("H2") },
     askH3: { file: "p8_h3_age.mp3", text: hearingQuestion("H3") },
@@ -1177,7 +1190,12 @@
     recapDocument: { file: "recap_r4_document.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" },
     recapAbsent: { file: "recap_r7_absent.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" }
   };
-  var UNRECORDED = /* @__PURE__ */ new Set([]);
+  var UNRECORDED = /* @__PURE__ */ new Set([
+    // HP 参照の承諾の一言（PHRASES.hpAck）。r_hp_reference.mp3 の前半と同じ文言
+    "r_hp_ack.mp3",
+    // 詳細ヒアリングの前置き（PHRASES.hearingCushion）
+    "p8_hearing_cushion.mp3"
+  ]);
   function clip(line) {
     return UNRECORDED.has(line.file) ? { text: line.text } : { text: line.text, audioFile: audioUrl(line.file) };
   }
@@ -1351,6 +1369,7 @@
   var BARE_COUNT = /(\d{1,4}|[〇一二三四五六七八九十]{1,4})\s*(?:名|人)/;
   var REASK_PREFIX = ["reask1", "reask2", "reask3"];
   var EARLY_PHASES = /* @__PURE__ */ new Set(["P0", "P1"]);
+  var isHearingSlot = (slot) => slot !== null && /^H[1-7]$/.test(slot);
   var SLOT_QUESTION = {
     H1: "askH1",
     H2: "askH2",
@@ -1361,7 +1380,8 @@
     H7: "askH7",
     email: "askEmail",
     callbackPhone: "askCallbackPhone",
-    callbackWindow: "askCallbackWindow"
+    callbackWindow: "askCallbackWindow",
+    hearingConsent: "hearingCushion"
   };
   var DialogEngine = class _DialogEngine {
     constructor(state2) {
@@ -1405,6 +1425,8 @@
     meetingOfferedAt = -1;
     /** P8 から HP 参照の切り返しで日程調整（P7）へ戻したか。承諾されたら P8 の残りから再開する。 */
     resumeP8 = false;
+    /** 詳細ヒアリング（H1〜）の前置き（許可取得）を済ませたか。1通話1回だけ挟む。 */
+    hearingCushioned = false;
     /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
     publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -1798,6 +1820,7 @@
     }
     // ---------- P8: ヒアリング7項目 ----------
     p8(text, fired) {
+      if (this.pending === "hearingConsent") return this.afterHearingConsent(text, fired);
       const notes = [];
       if (this.harvested.length > 0) {
         notes.push(`\u307E\u3068\u3081\u805E\u304D\u3067 ${this.harvested.join("\u30FB")} \u3092\u540C\u6642\u53D6\u5F97`);
@@ -1851,6 +1874,16 @@
           `${notes.join(" / ") || "\u53D6\u5F97\u5B8C\u4E86"} \u2192 7\u9805\u76EE\uFF0B\u9023\u7D61\u5148\u304C\u63C3\u3063\u305F\u306E\u3067\u7DE0\u3081(P9)`
         );
       }
+      if (isHearingSlot(nextSlot) && !this.hearingCushioned) {
+        this.hearingCushioned = true;
+        this.pending = "hearingConsent";
+        return this.speakPhrases(
+          [...leadParts.length > 0 ? leadParts : ["r7Ack"], "hearingCushion"],
+          "P8",
+          fired,
+          `${notes.length > 0 ? notes.join(" / ") + " \u2192 " : ""}\u8A73\u7D30\u30D2\u30A2\u30EA\u30F3\u30B0\u306E\u524D\u306B\u524D\u7F6E\u304D\uFF08\u8A31\u53EF\u53D6\u5F97\uFF09`
+        );
+      }
       this.pending = nextSlot;
       return this.speakPhrases(
         [...leadParts, ...this.askParts(nextSlot)],
@@ -1894,9 +1927,12 @@
      * P8 で「ホームページのアドレスで」と指定されたときの処理。
      *
      * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
-     * 指定された連絡先はこちらでサイトから確認するものとして確定し（読み上げる文字列が無いので復唱も済みとする）、
-     * HP参照の切り返し（r_hp_reference）を流して日程調整（P7）へ戻す。承諾されたら P8 の残りから再開する。
-     * 切り返しは1通話1回まで。すでに流していれば流し直さず、そのまま残りの確認事項へ進める。
+     * 指定された連絡先はこちらでサイトから確認するものとして確定する（読み上げる文字列が無いので復唱も済みとする）。
+     *
+     * この後に詳細ヒアリングへ入る場合は、承諾の一言（「サイトより確認させていただきますね」）→
+     * 前置き（許可取得）→ 最初の質問の順に進め、唐突に質問を始めない。
+     * それ以外は HP参照の切り返し（r_hp_reference）を流して日程調整（P7）へ戻し、承諾されたら P8 の残りから再開する。
+     * 切り返しは1通話1回まで。すでに流していれば流し直さず、承諾の一言から残りの確認事項へ進める。
      */
     acceptHpAddress(text, fired) {
       const number = this.pending === "callbackPhone" && (Boolean(this.state.email) || /(番号|電話)/.test(text));
@@ -1907,17 +1943,30 @@
       this.unknownStreak = 0;
       this.expecting = null;
       const note = number ? "\u524D\u65E5\u9023\u7D61\u306E\u756A\u53F7\u3092HP\u63B2\u8F09\u306E\u3082\u306E\u3067\u6307\u5B9A" : "\u9001\u4ED8\u5148\u3092HP\u63B2\u8F09\u306E\u30A2\u30C9\u30EC\u30B9\u3067\u6307\u5B9A";
-      if (this.meetingOfferedAt < 0) {
-        this.meetingOfferedAt = this.state.turns.length;
-        this.resumeP8 = true;
-        return this.speakPhrases(
-          ["hpReference"],
-          this.toPhase("P7"),
-          fired,
-          `${note} \u2192 \u805E\u304D\u76F4\u3055\u305AHP\u53C2\u7167\u306E\u5207\u308A\u8FD4\u3057\u3092\u6D41\u3057\u3001\u65E5\u7A0B\u8ABF\u6574(P7)\u3078\u623B\u308B`
-        );
+      const intoHearing = isHearingSlot(this.nextSlot()) && !this.hearingCushioned;
+      if (intoHearing || this.meetingOfferedAt >= 0) {
+        return this.advanceP8([`${note} \u2192 \u627F\u8AFE\u306E\u4E00\u8A00\u304B\u3089\u7D9A\u3051\u308B`], fired, "hpAck");
       }
-      return this.advanceP8([`${note}\uFF08HP\u53C2\u7167\u306E\u5207\u308A\u8FD4\u3057\u306F\u518D\u751F\u6E08\u307F\u306E\u305F\u3081\u7701\u7565\uFF09`], fired);
+      this.meetingOfferedAt = this.state.turns.length;
+      this.resumeP8 = true;
+      return this.speakPhrases(
+        ["hpReference"],
+        this.toPhase("P7"),
+        fired,
+        `${note} \u2192 \u805E\u304D\u76F4\u3055\u305AHP\u53C2\u7167\u306E\u5207\u308A\u8FD4\u3057\u3092\u6D41\u3057\u3001\u65E5\u7A0B\u8ABF\u6574(P7)\u3078\u623B\u308B`
+      );
+    }
+    /**
+     * 詳細ヒアリングの前置き（「1、2点お伺いしてもよろしいでしょうか？」）への返事を受ける。
+     * 渋られても、ヒアリングは全項目の取得が前提なので、お詫びを添えて最初の1問だけ伺う。
+     */
+    afterHearingConsent(text, fired) {
+      this.pending = null;
+      this.unknownStreak = 0;
+      const reluctant = NO.test(text) && !YES.test(text);
+      const notes = this.harvested.length > 0 ? [`\u307E\u3068\u3081\u805E\u304D\u3067 ${this.harvested.join("\u30FB")} \u3092\u540C\u6642\u53D6\u5F97`] : [];
+      notes.push(reluctant ? "\u524D\u7F6E\u304D\u3078\u306E\u8FD4\u4E8B\u304C\u6D88\u6975\u7684 \u2192 \u304A\u8A6B\u3073\u3092\u6DFB\u3048\u3066\u4F3A\u3046" : "\u524D\u7F6E\u304D\u3078\u306E\u627F\u8AFE");
+      return this.advanceP8(notes, fired, reluctant ? "reask2" : void 0);
     }
     /** そのスロットがすでに埋まっているか。 */
     isFilled(slot) {
@@ -1930,6 +1979,8 @@
           return Boolean(this.state.callbackPhone);
         case "callbackWindow":
           return Boolean(this.state.callbackWindow);
+        case "hearingConsent":
+          return false;
         default:
           return Boolean(this.state.hearing[slot]);
       }
@@ -2002,6 +2053,8 @@
         }
         case "callbackWindow":
           return { facts: { callback_window: text }, ok: /(午前|午後|朝|昼|夕方|夜|時|いつでも)/.test(text) };
+        case "hearingConsent":
+          return { facts: {}, ok: true };
       }
     }
     // ---------- R7（不在）の継続 ----------
