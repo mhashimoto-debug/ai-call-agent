@@ -785,6 +785,55 @@
     }
   }
 
+  // src/web/endpoint.ts
+  var SILENCE_TIMEOUT_MS = 1300;
+  var CONTINUATION_EXTRA_MS = 1200;
+  var CONTINUATION_END = /(でして|ですが|ですけど|ですけれども|ですけれど|ますが|ますけど|けれども|けれど|けど|から|ので|のに|ながら|たり|たら|なら|って|し|て|で|と|が|は|の|に|を|も|や|へ|えーっと|えっと|えーと|あのー|あの|そのー|その|まあ|なんか|あと|それと|アット|ドット|ハイフン|[@.\-－ー])$/;
+  function endsWithContinuation(text) {
+    const t = text.replace(/\s+$/, "");
+    if (!t) return false;
+    if (/[。？?！!]$/.test(t)) return false;
+    if (/[、，,…]$/.test(t)) return true;
+    return CONTINUATION_END.test(t);
+  }
+  function silenceWaitMs(text) {
+    return SILENCE_TIMEOUT_MS + (endsWithContinuation(text) ? CONTINUATION_EXTRA_MS : 0);
+  }
+  var realScheduler = {
+    set: (fn, ms) => setTimeout(fn, ms),
+    clear: (handle) => clearTimeout(handle)
+  };
+  var EndpointDetector = class {
+    constructor(onEndpoint, scheduler = realScheduler) {
+      this.onEndpoint = onEndpoint;
+      this.scheduler = scheduler;
+    }
+    onEndpoint;
+    scheduler;
+    handle = null;
+    latest = "";
+    /** ここまでに聞き取れたテキスト（確定分＋暫定分）。 */
+    get text() {
+      return this.latest;
+    }
+    /** 認識結果が届いたときに呼ぶ。無音待ちをやり直す。 */
+    feed(text) {
+      this.latest = text;
+      this.cancel();
+      if (!text.trim()) return;
+      this.handle = this.scheduler.set(() => {
+        this.handle = null;
+        this.onEndpoint(this.latest);
+      }, silenceWaitMs(text));
+    }
+    /** 無音待ちをやめる（手動で確定したとき・破棄したとき）。 */
+    cancel() {
+      if (this.handle === null) return;
+      this.scheduler.clear(this.handle);
+      this.handle = null;
+    }
+  };
+
   // src/web/mic.ts
   function ctor() {
     const w = window;
@@ -811,6 +860,9 @@
   var MicInput = class {
     rec = null;
     finalText = "";
+    /** ここまでに聞き取れたテキスト（確定分＋暫定分）。止めた時点で確定しきれていない分も含めて渡すため。 */
+    heard = "";
+    endpoint = null;
     get listening() {
       return this.rec !== null;
     }
@@ -823,10 +875,15 @@
       if (this.rec) return;
       const rec = new C();
       rec.lang = "ja-JP";
-      rec.continuous = false;
+      rec.continuous = true;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
       this.finalText = "";
+      this.heard = "";
+      const endpoint = new EndpointDetector(() => {
+        if (this.rec === rec) rec.stop();
+      });
+      this.endpoint = endpoint;
       rec.onresult = (e) => {
         let interim = "";
         for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -836,14 +893,18 @@
           if (r.isFinal) this.finalText += text;
           else interim += text;
         }
-        if (interim) handlers.onInterim?.(this.finalText + interim);
+        this.heard = this.finalText + interim;
+        if (interim) handlers.onInterim?.(this.heard);
+        endpoint.feed(this.heard);
       };
       rec.onerror = (e) => {
         handlers.onError(micErrorMessage(e.error));
       };
       rec.onend = () => {
+        endpoint.cancel();
+        if (this.endpoint === endpoint) this.endpoint = null;
         this.rec = null;
-        const text = this.finalText.trim();
+        const text = (this.heard.length > this.finalText.length ? this.heard : this.finalText).trim();
         if (text) handlers.onFinal(text);
         handlers.onEnd?.();
       };
@@ -852,10 +913,13 @@
     }
     /** 手動で確定させる（話し終わりの自動検出を待たない）。 */
     stop() {
+      this.endpoint?.cancel();
       this.rec?.stop();
     }
     /** 破棄する（結果は使わない）。 */
     abort() {
+      this.endpoint?.cancel();
+      this.endpoint = null;
       const r = this.rec;
       this.rec = null;
       r?.abort();
