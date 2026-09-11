@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bulkExtract, DialogEngine, GUARDRAIL_LINE, type DialogReply } from "./dialogEngine.js";
+import { bulkExtract, DialogEngine, GUARDRAIL_LINE, isPromptOnly, type DialogReply } from "./dialogEngine.js";
 import { AUDIO_BASE, PHRASES, VOICE_LINES, audioFiles } from "./voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
 import type { GuardrailId } from "../domain/types.js";
@@ -152,7 +152,8 @@ test("『少々お待ちください』の後に担当者が出た際、再名�
   assert.equal(overview.utterance, VOICE_LINES.overview.text, `概要を伝えていない: ${overview.matched}`);
   assert.equal(overview.phase, "P1");
   const hearing = dialog.respond("なるほど、そうなんですね");
-  assert.equal(hearing.utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(hearing.utterance, PHRASES.recapHearingAgeCount.text);
+  assert.doesNotMatch(hearing.utterance, /ご回答ありがとうございます/, "相槌に回答のお礼を言っている");
   assert.equal(hearing.phase, "P3");
 });
 
@@ -190,7 +191,7 @@ test("取次ぎ: 受付に概要を伝えたあとの保留でもヒアリング
   // 受付に伝えた概要は担当者に届いていないので、もう一度伝える
   const overview = dialog.respond("はい");
   assert.equal(overview.utterance, VOICE_LINES.overview.text, `担当者に概要を伝えていない: ${overview.matched}`);
-  assert.equal(dialog.respond("なるほど").utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(dialog.respond("なるほど").utterance, PHRASES.recapHearingAgeCount.text);
 });
 
 test("取次ぎ: 保留の合図に制度なし(R1)が混じっても、保留中の受付には切り返さない", () => {
@@ -209,7 +210,7 @@ test("取次ぎ: 本人が手元の確認で待たせただけなら、戻った
   assert.equal(dialog.respond("ちょっと待ってくださいね").holding, true);
   const back = dialog.respond("お待たせしました、どうぞ");
   assert.notEqual(back.utterance, REINTRO, "相手が替わっていないのに名乗り直している");
-  assert.equal(back.utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(back.utterance, PHRASES.recapHearingAgeCount.text);
 });
 
 test("取次ぎ: 保留のあとに受付が不在を伝えたら、名乗り直さず不在対応に切り替える", () => {
@@ -229,6 +230,66 @@ test("取次ぎ: ヒアリング中の「少々お待ちください」も黙っ
   assert.equal(r.utterance, VOICE_LINES.schedule.text);
 });
 
+// ---------- 概要のあとの相槌・促し ----------
+
+const PROMPTS = [
+  "どうぞ",
+  "はい",
+  "はい、どうぞ",
+  "どうぞ教えてください",
+  "ええ、お願いします",
+  "なるほど",
+  "はい、聞いてますよ",
+  "大丈夫です、どうぞ",
+];
+
+for (const text of PROMPTS) {
+  test(`相手が『${text}』と促した場合に『ご回答ありがとうございます』と言わずにヒアリングへ進む`, () => {
+    const { dialog } = fresh();
+    dialog.greeting();
+    assert.equal(dialog.respond("私です").utterance, VOICE_LINES.overview.text);
+
+    const r = dialog.respond(text);
+    assert.doesNotMatch(r.utterance, /ご回答ありがとうございます/, `促しに回答のお礼を言っている: ${r.matched}`);
+    assert.equal(r.utterance, PHRASES.recapHearingAgeCount.text, `人数のヒアリングへ進んでいない: ${r.matched}`);
+    assert.match(r.utterance, /^恐れ入ります、/);
+    assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}recap_p2_p3_hearing.mp3`]);
+    assert.equal(r.phase, "P3");
+
+    // 続けて人数を答えてもらえれば、そのまま次の質問へ進む
+    assert.equal(dialog.respond("20人くらいです").utterance, VOICE_LINES.hearingFiscalEmail.text);
+  });
+}
+
+test("概要への実のある回答には、これまでどおり「ご回答ありがとうございます」から人数を伺う", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("私です");
+  const r = dialog.respond("社長の退職金は前から気になってたんですよ");
+  assert.equal(r.utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(r.phase, "P3");
+});
+
+test("促しのあとに聞き取れない返事が続いても、「ご回答ありがとうございます」の台本に戻らない", () => {
+  const { dialog } = fresh();
+  dialog.greeting();
+  dialog.respond("私です");
+  dialog.respond("どうぞ");
+  const r = dialog.respond("えーっと、なんでしたっけ");
+  assert.doesNotMatch(r.utterance, /ご回答ありがとうございます/, `答えていない相手に回答のお礼を言っている: ${r.matched}`);
+  assert.notEqual(r.utterance, PHRASES.recapHearingAgeCount.text, "同じ聞き直しを続けている");
+  assert.match(r.utterance, /従業員数/);
+});
+
+test("相槌・促しの判定: 相槌だけの発話と、中身のある回答を切り分ける", () => {
+  for (const text of [...PROMPTS, "で？", "お待たせしました、どうぞ", "ええと、はい"]) {
+    assert.ok(isPromptOnly(text), `相槌・促しとして判定されない: ${text}`);
+  }
+  for (const text of ["役員は2人です", "うちは保険でやってます", "どういうことですか", "特に考えてないですね", ""]) {
+    assert.ok(!isPromptOnly(text), `回答を相槌と誤判定している: ${text}`);
+  }
+});
+
 // ---------- 想定外発話のフォールバック ----------
 
 test("想定外の発話でも読み上げに落とさず、録音で会話を立て直す", () => {
@@ -237,7 +298,7 @@ test("想定外の発話でも読み上げに落とさず、録音で会話を�
   dialog.respond("少々お待ちください、代わります"); // → 保留（発話しない）
   dialog.respond("はい、代表の中村です"); // → 名乗り直し(P1)
   dialog.respond("はい"); // → 概要(P1)
-  const asked = dialog.respond("なるほど"); // → 年齢層・人数(P3)
+  const asked = dialog.respond("社長の退職金は前から気になってたんですよ"); // → 回答を受けて年齢層・人数(P3)
   assert.equal(asked.utterance, VOICE_LINES.hearingAgeCount.text);
 
   // 1回目: 直前に聞いた内容をそのまま短く聞き直す（長い台本は繰り返さない）

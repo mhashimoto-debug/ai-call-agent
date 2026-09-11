@@ -144,6 +144,26 @@ const TOOK_OVER = /(代わ|かわ|替わ)りました/;
 
 /** 保留が明けた合図（「お待たせしました」）。取次ぎの後なら、代わって出た担当者の第一声。 */
 const HOLD_OVER = /お待たせ/;
+
+/**
+ * 相槌・促しの語（「はい」「どうぞ」「どうぞ教えてください」「なるほど」）。
+ * 長いものを先に並べる（「ええと」を「ええ」＋「と」に割らないため）。
+ */
+const PROMPT_WORD =
+  /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
+const PROMPT_PUNCT = /[\s、。，．,.!！?？…〜~]/g;
+
+/** 続きを促す言い方。「大丈夫です、どうぞ」を断りと取り違えないために使う。 */
+const GO_AHEAD = /(どうぞ|続けて|教えて|聞かせて|お聞きし)/;
+
+/**
+ * 相槌・促しだけの発話か。
+ * 聞く姿勢を示しただけで何かに答えたわけではないので、「ご回答ありがとうございます」で受けると噛み合わない。
+ */
+export function isPromptOnly(text: string): boolean {
+  const stripped = text.replace(PROMPT_PUNCT, "");
+  return stripped.length > 0 && stripped.replace(PROMPT_WORD, "") === "";
+}
 /** 受付での営業電話ブロック。 */
 export const REFUSE_SALES =
   /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
@@ -835,7 +855,26 @@ export class DialogEngine {
       return this.say("overview", "P1", fired, "担当者接続 → 法改正の概要");
     }
     this.unknownStreak = 0;
-    return this.say("hearingAgeCount", "P3", fired, "概要への反応 → 年齢層と人数のヒアリング");
+    // 「どうぞ」「はい」は聞く姿勢を示しただけで、何かに答えたわけではない。
+    // 「ご回答ありがとうございます！」から入る台本は使わず、「恐れ入ります、」から人数を伺う
+    if (isPromptOnly(text)) return this.askHeadcountAfterPrompt(fired);
+    return this.say("hearingAgeCount", "P3", fired, "概要への回答 → 年齢層と人数のヒアリング");
+  }
+
+  /**
+   * 相槌・促しを受けて人数を伺う。
+   * 収録台本（hearingAgeCount）は「ご回答ありがとうございます！」から入るので、答えていない相手には流さない。
+   * この後の言い直しでもこの台本に戻らないよう、言い直し・要点の聞き直しとも使用済みにしておく。
+   */
+  private askHeadcountAfterPrompt(fired: GuardrailId[]): DialogReply {
+    this.replayed.add("hearingAgeCount");
+    this.recapped.add("hearingAgeCount");
+    return this.speakPhrases(
+      ["recapHearingAgeCount"],
+      "P3",
+      fired,
+      "概要への相槌・促し（回答ではない）→ お礼の定型を使わず「恐れ入ります」から人数のヒアリング",
+    );
   }
 
   /** P2/P3: 年齢層・人数を聞いている場面。 */
@@ -1368,6 +1407,8 @@ export class DialogEngine {
     }
     if (DECLINE.test(text)) return true;
     if (/大丈夫/.test(text)) {
+      // 「大丈夫です、どうぞ」は続きを促している（断りではない）
+      if (GO_AHEAD.test(text)) return false;
       // オンラインでのご挨拶を打診した直後の「大丈夫です」は、日程の可否への返事として読む
       const scheduling = phase === "P6" || phase === "P7" || this.justOfferedMeeting();
       return !scheduling && !SCHEDULE_CONTEXT.test(text);

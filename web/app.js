@@ -1222,6 +1222,13 @@
   var HANDOFF_VERB = /((代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り))/;
   var TOOK_OVER = /(代わ|かわ|替わ)りました/;
   var HOLD_OVER = /お待たせ/;
+  var PROMPT_WORD = /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
+  var PROMPT_PUNCT = /[\s、。，．,.!！?？…〜~]/g;
+  var GO_AHEAD = /(どうぞ|続けて|教えて|聞かせて|お聞きし)/;
+  function isPromptOnly(text) {
+    const stripped = text.replace(PROMPT_PUNCT, "");
+    return stripped.length > 0 && stripped.replace(PROMPT_WORD, "") === "";
+  }
   var REFUSE_SALES = /(営業(の)?(お)?電話|営業は|セールス|勧誘|売り込み|お断り(し|する|して|です)|断るよう|取り次げ|取次(ぎ)?でき|お繋ぎでき|お受けでき|そういう(お)?電話|この手の電話|一切受け付け|間に合ってます)/;
   var SCHEDULE_NG = /(都合が悪|都合つか|都合がつか|予定が入って|埋まって|ふさがって|塞がって|空いて(ない|いない|ませ)|厳しい|難しい|無理です|無理かな|出張(で|が|に)|休みで|定休|別の日|他の日|ほかの日|再来週|変更|ずらし|遅らせ|もう少し先)/;
   var SCHEDULE_OK = /(大丈夫|空いて(ます|います|る)|問題ありませ|問題ない|構いませ|かまいませ|いけます|行けます|参加でき|出られ|可能です|お願いします|入れておき|それで(いい|結構|お願い)|承知|了解|調整し|都合つけ|押さえて|空けておき|みてみます)/;
@@ -1654,7 +1661,23 @@
         return this.say("overview", "P1", fired, "\u62C5\u5F53\u8005\u63A5\u7D9A \u2192 \u6CD5\u6539\u6B63\u306E\u6982\u8981");
       }
       this.unknownStreak = 0;
-      return this.say("hearingAgeCount", "P3", fired, "\u6982\u8981\u3078\u306E\u53CD\u5FDC \u2192 \u5E74\u9F62\u5C64\u3068\u4EBA\u6570\u306E\u30D2\u30A2\u30EA\u30F3\u30B0");
+      if (isPromptOnly(text)) return this.askHeadcountAfterPrompt(fired);
+      return this.say("hearingAgeCount", "P3", fired, "\u6982\u8981\u3078\u306E\u56DE\u7B54 \u2192 \u5E74\u9F62\u5C64\u3068\u4EBA\u6570\u306E\u30D2\u30A2\u30EA\u30F3\u30B0");
+    }
+    /**
+     * 相槌・促しを受けて人数を伺う。
+     * 収録台本（hearingAgeCount）は「ご回答ありがとうございます！」から入るので、答えていない相手には流さない。
+     * この後の言い直しでもこの台本に戻らないよう、言い直し・要点の聞き直しとも使用済みにしておく。
+     */
+    askHeadcountAfterPrompt(fired) {
+      this.replayed.add("hearingAgeCount");
+      this.recapped.add("hearingAgeCount");
+      return this.speakPhrases(
+        ["recapHearingAgeCount"],
+        "P3",
+        fired,
+        "\u6982\u8981\u3078\u306E\u76F8\u69CC\u30FB\u4FC3\u3057\uFF08\u56DE\u7B54\u3067\u306F\u306A\u3044\uFF09\u2192 \u304A\u793C\u306E\u5B9A\u578B\u3092\u4F7F\u308F\u305A\u300C\u6050\u308C\u5165\u308A\u307E\u3059\u300D\u304B\u3089\u4EBA\u6570\u306E\u30D2\u30A2\u30EA\u30F3\u30B0"
+      );
     }
     /** P2/P3: 年齢層・人数を聞いている場面。 */
     hearingAgeCount(text, fired) {
@@ -2116,6 +2139,7 @@
       }
       if (DECLINE.test(text)) return true;
       if (/大丈夫/.test(text)) {
+        if (GO_AHEAD.test(text)) return false;
         const scheduling = phase === "P6" || phase === "P7" || this.justOfferedMeeting();
         return !scheduling && !SCHEDULE_CONTEXT.test(text);
       }

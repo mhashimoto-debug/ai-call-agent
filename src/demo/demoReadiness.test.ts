@@ -86,7 +86,8 @@ const HANDOFF_TURNS: [string, string][] = [
   ["少々お待ちください、代わります", ""],
   ["はい、代表の中村です", PHRASES.handoffReintro.text],
   ["はい、どういったお話でしょう", VOICE_LINES.overview.text],
-  ["なるほど、そうなんですね", VOICE_LINES.hearingAgeCount.text],
+  // 相槌は回答ではないので「ご回答ありがとうございます」ではなく「恐れ入ります、」から人数を伺う
+  ["なるほど、そうなんですね", PHRASES.recapHearingAgeCount.text],
 ];
 
 /** 受付の取次ぎを経て、担当者に年齢層・人数を尋ねるところまで進める。 */
@@ -106,7 +107,7 @@ const A_OPENINGS: { label: string; opening: [string, string][] }[] = [
     label: "本人応答",
     opening: [
       ["私です", VOICE_LINES.overview.text],
-      ["はい、聞いてますよ", VOICE_LINES.hearingAgeCount.text],
+      ["はい、聞いてますよ", PHRASES.recapHearingAgeCount.text],
     ],
   },
 ];
@@ -180,7 +181,7 @@ for (const text of ["担当者のお名前はお分かりでしょうか", "担�
     const overview = call.say("はい、どういったお話でしょう");
     assert.equal(overview.utterance, VOICE_LINES.overview.text, `名乗り直しの後に概要へ進まない: ${overview.matched}`);
     assert.deepEqual(audioFiles(overview.segments), [`${AUDIO_BASE}p1_overview.mp3`]);
-    assert.equal(call.say("なるほど").utterance, VOICE_LINES.hearingAgeCount.text);
+    assert.equal(call.say("なるほど").utterance, PHRASES.recapHearingAgeCount.text);
     assertHealthyA(call, `担当名ガード「${text}」`);
   });
 }

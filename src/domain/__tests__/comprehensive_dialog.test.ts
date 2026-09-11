@@ -44,6 +44,7 @@ class Call {
 
 const HEARING_LINES: string[] = [
   VOICE_LINES.hearingAgeCount.text,
+  PHRASES.recapHearingAgeCount.text,
   VOICE_LINES.hearingFiscalEmail.text,
   VOICE_LINES.schedule.text,
 ];
@@ -70,7 +71,7 @@ function passReception(call: Call): void {
   assert.equal(hold.holding, true, `取次ぎの保留中に発話している: ${hold.matched}`);
   assert.equal(call.say("はい、代表の中村です").utterance, PHRASES.handoffReintro.text);
   assert.equal(call.say("はい、どういったお話でしょう").utterance, VOICE_LINES.overview.text);
-  assert.equal(call.say("なるほど").utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(call.say("なるほど").utterance, PHRASES.recapHearingAgeCount.text);
 }
 
 // ============================================================
@@ -778,7 +779,7 @@ for (const text of SELF_IDENTIFY_CASES) {
 test("タイプA 本人応答: そのままヒアリングまで進める", () => {
   const call = new Call();
   assert.equal(call.say("私です").utterance, VOICE_LINES.overview.text);
-  assert.equal(call.say("はい、聞いてますよ").utterance, VOICE_LINES.hearingAgeCount.text);
+  assert.equal(call.say("はい、聞いてますよ").utterance, PHRASES.recapHearingAgeCount.text);
   assert.equal(
     call.say("50代で、役員2名と社員18名の20人です").utterance,
     VOICE_LINES.hearingFiscalEmail.text,
