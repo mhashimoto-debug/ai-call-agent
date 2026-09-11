@@ -37,9 +37,9 @@ export function evaluateDod(state: CallState): DodResult {
     },
     {
       key: "zoom",
-      label: "Zoom 実施と所要30分に同意を得ている",
+      label: "オンライン実施と所要15分に同意を得ている",
       ok: state.zoomAgreed && state.durationAgreed,
-      detail: `Zoom: ${state.zoomAgreed ? "同意" : "未"} / 30分: ${state.durationAgreed ? "同意" : "未"}`,
+      detail: `オンライン: ${state.zoomAgreed ? "同意" : "未"} / 15分: ${state.durationAgreed ? "同意" : "未"}`,
     },
     {
       key: "hearing",

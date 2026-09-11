@@ -43,7 +43,7 @@ export const TurnOutputSchema = z.object({
       appointment_date: z.string().nullable(),
       appointment_time: z.string().nullable(),
       zoom_agreed: z.boolean(),
-      duration_agreed: z.boolean().describe("所要30分に同意が取れたか"),
+      duration_agreed: z.boolean().describe("所要15分に同意が取れたか"),
       calendar_requested: z.boolean().describe("今回の発話でカレンダー登録を依頼したか"),
       law_change_hook_used: z.boolean().describe("今回の発話で法改正フックを使ったか"),
     })

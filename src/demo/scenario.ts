@@ -26,7 +26,7 @@ export const DEMO_SCENARIO: Scenario = {
   contactTitle: "代表",
   proposedDate: "9月17日（水）",
   proposedTime: "14時",
-  meetingMinutes: 30,
+  meetingMinutes: 15,
   situation:
     "ハローワーク求人リストからの新規架電（過去の接点なし）。代表は50代、退職金は保険で対応済み、企業型DCは未認知。",
 };

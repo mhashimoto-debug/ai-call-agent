@@ -63,7 +63,7 @@ function renderScenario(): void {
   const goal =
     mode === "transfer"
       ? "ゴール: 受付を突破して担当者に取次いでもらい、人間のオペレーターへ引き継ぐ"
-      : `ゴール: ${s.proposedDate} ${s.proposedTime} の Zoom 商談（${s.meetingMinutes}分）確定＋ヒアリング7項目取得`;
+      : `ゴール: ${s.proposedDate} ${s.proposedTime} のオンライン商談（${s.meetingMinutes}分）確定＋ヒアリング7項目取得`;
   $("scenario").textContent =
     `架電先: ${s.companyName}（従業員${s.employeeCount}名・役員${s.officerCount}名） ／ ` +
     `相手: ${s.contactTitle} ${s.contactName}様 ／ ${goal}`;
