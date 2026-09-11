@@ -250,6 +250,10 @@ const PROMPTS = [
   "なるほど",
   "はい、聞いてますよ",
   "大丈夫です、どうぞ",
+  "詳しく話してください",
+  "詳しく教えて",
+  "もう少し詳しくお願いします",
+  "詳しく聞かせてください",
 ];
 
 for (const text of PROMPTS) {
@@ -512,6 +516,60 @@ test("P8 メール: 「〜ドットネットでお願いします」はアドレ
   assert.notEqual(r.utterance, PHRASES.hpReference.text, "HP参照として扱っている");
   assert.equal(state.email, "nakamura@nifty.net");
   assert.deepEqual(segTexts(r), confirmParts("nakamura@nifty.net"));
+});
+
+// ---------- P5: 決算月・メールアドレスのうち、聞けていない方だけを尋ねる ----------
+
+/** 概要のあと人数のヒアリング（P3）まで進める。 */
+function atHeadcount() {
+  const ctx = fresh();
+  ctx.dialog.greeting();
+  ctx.dialog.respond("私です"); // → 概要
+  assert.equal(ctx.dialog.respond("どうぞ").utterance, PHRASES.recapHearingAgeCount.text); // → 人数(P3)
+  return ctx;
+}
+
+test("P3で決算月を先に答えていれば、P5では決算月を聞き直さずメールアドレスだけを尋ねる", () => {
+  const { state, dialog } = atHeadcount();
+  const r = dialog.respond("20人くらいで、決算は3月です");
+  assert.equal(state.hearing.H7, "3月");
+  assert.notEqual(r.utterance, VOICE_LINES.hearingFiscalEmail.text, "取得済みの決算月を聞き直している");
+  assert.doesNotMatch(r.utterance, /決算月/);
+  assert.equal(r.utterance, PHRASES.askEmail.text);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}p8_email.mp3`]);
+  assert.equal(r.phase, "P5");
+
+  // メールアドレスを答えれば日程打診へ
+  assert.equal(dialog.respond("nakamura@example.co.jp です").utterance, VOICE_LINES.schedule.text);
+});
+
+test("P5 メールアドレスだけを聞いて聞き取れなかったときは、決算月と両方を聞く台本に戻らず同じ質問を聞き直す", () => {
+  const { dialog } = atHeadcount();
+  dialog.respond("20人くらいで、決算は3月です"); // → メールアドレスのみ
+  const again = dialog.respond("えーっと");
+  assert.deepEqual(segTexts(again), [PHRASES.reask1.text, PHRASES.askEmail.text]);
+  assert.doesNotMatch(again.utterance, /決算月/);
+});
+
+test("P3でメールアドレスを先に答えていれば、P5では決算月だけを尋ねる", () => {
+  const { state, dialog } = atHeadcount();
+  const r = dialog.respond("20人です。メールは nakamura@example.co.jp です");
+  assert.equal(state.email, "nakamura@example.co.jp");
+  assert.equal(r.utterance, PHRASES.askH7.text);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}p8_h7_fiscal.mp3`]);
+  assert.equal(dialog.respond("3月です").utterance, VOICE_LINES.schedule.text);
+});
+
+test("P3で決算月もメールアドレスも答えていれば、P5を飛ばして日程打診へ進む", () => {
+  const { dialog } = atHeadcount();
+  const r = dialog.respond("20人で、決算は3月、メールは nakamura@example.co.jp です");
+  assert.equal(r.utterance, VOICE_LINES.schedule.text);
+  assert.equal(r.phase, "P7");
+});
+
+test("P3で何も先に答えていなければ、これまでどおり決算月と送付先メールアドレスを両方尋ねる", () => {
+  const { dialog } = atHeadcount();
+  assert.equal(dialog.respond("20人くらいです").utterance, VOICE_LINES.hearingFiscalEmail.text);
 });
 
 // ---------- 想定外発話のフォールバック ----------

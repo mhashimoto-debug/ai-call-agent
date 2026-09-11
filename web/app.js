@@ -1292,7 +1292,7 @@
   var HANDOFF_VERB = /((代わ|かわ|替わ)ります|(繋ぎ|つなぎ)(します|いたします|致します)|(繋|つな)ぎます|呼んで(きます|まいり|参り)|お呼び(します|いたします|してまいり|して参り))/;
   var TOOK_OVER = /(代わ|かわ|替わ)りました/;
   var HOLD_OVER = /お待たせ/;
-  var PROMPT_WORD = /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
+  var PROMPT_WORD = /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|詳しく|くわしく|もう少し|もうちょっと|説明して(ください)?|お話し(ください)?|話して(ください)?|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
   var PROMPT_PUNCT = /[\s、。，．,.!！?？…〜~]/g;
   var GO_AHEAD = /(どうぞ|続けて|教えて|聞かせて|お聞きし)/;
   function isPromptOnly(text) {
@@ -1509,6 +1509,10 @@
     resumeP8 = false;
     /** 詳細ヒアリング（H1〜）へ移るときの前置きを済ませたか。1通話1回だけ挟む。 */
     hearingCushioned = false;
+    /** P5 で決算月・メールアドレスの片方だけを聞いた質問（両方を聞く台本の代わり）。 */
+    fiscalEmailAsk = null;
+    /** その片方だけの質問を聞き直したか。聞き直しは1回まで。 */
+    fiscalEmailReasked = false;
     /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
     publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -1567,12 +1571,7 @@
       if (collected === "headcount") {
         this.unknownStreak = 0;
         this.refusalStreak = 0;
-        return this.say(
-          "hearingFiscalEmail",
-          this.toPhase("P5"),
-          fired,
-          "\u5207\u308A\u8FD4\u3057\u3078\u306E\u56DE\u7B54\u304B\u3089 H5 \u3092\u53D6\u5F97 \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078"
-        );
+        return this.askFiscalEmail(fired, "\u5207\u308A\u8FD4\u3057\u3078\u306E\u56DE\u7B54\u304B\u3089 H5 \u3092\u53D6\u5F97");
       }
       if (fired.includes("R2") && this.busyPitchDone) {
         const cont = this.afterBusy(fired);
@@ -1820,7 +1819,33 @@
       this.unknownStreak = 0;
       this.expecting = null;
       const note = got.length > 0 ? `${[...new Set(got)].join("\u30FB")} \u3092\u53D6\u5F97` : "\u53CD\u5FDC\u3092\u78BA\u8A8D";
-      return this.say("hearingFiscalEmail", "P5", fired, `${note} \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078`);
+      return this.askFiscalEmail(fired, note);
+    }
+    /**
+     * 決算月と送付先メールアドレスを伺う（P5 へ）。
+     * 収録台本（hearingFiscalEmail）は「決算月と、送付先のメールアドレス」を両方聞くので、
+     * 片方をすでに聞けているときは、残りの片方だけを聞く録音に切り替える（聞けていることを聞き直さない）。
+     * 両方とも聞けていれば、そのまま日程打診へ進む。
+     */
+    askFiscalEmail(fired, note) {
+      const fiscal = Boolean(this.state.hearing.H7);
+      const email = Boolean(this.state.email);
+      if (fiscal && email && this.toPhase("P7") === "P7") {
+        return this.say("schedule", "P7", fired, `${note} \u2192 \u6C7A\u7B97\u6708\u30FB\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3068\u3082\u53D6\u5F97\u6E08\u307F\u306E\u305F\u3081\u65E5\u7A0B\u6253\u8A3A\u3078`);
+      }
+      if (fiscal === email) {
+        return this.say("hearingFiscalEmail", this.toPhase("P5"), fired, `${note} \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078`);
+      }
+      const ask = fiscal ? "askEmail" : "askH7";
+      this.fiscalEmailAsk = ask;
+      this.replayed.add("hearingFiscalEmail");
+      this.recapped.add("hearingFiscalEmail");
+      return this.speakPhrases(
+        [ask],
+        this.toPhase("P5"),
+        fired,
+        `${note} \u2192 ${fiscal ? "\u6C7A\u7B97\u6708\u306F\u53D6\u5F97\u6E08\u307F\u306E\u305F\u3081\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u307F" : "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306F\u53D6\u5F97\u6E08\u307F\u306E\u305F\u3081\u6C7A\u7B97\u6708\u306E\u307F"}`
+      );
     }
     /** P4/P5: 決算月・メールアドレスを聞いている場面。 */
     hearingFiscalEmail(text, fired) {
@@ -1846,6 +1871,15 @@
         );
       }
       if (got.length === 0 && !YES.test(text)) {
+        if (this.fiscalEmailAsk && !this.fiscalEmailReasked) {
+          this.fiscalEmailReasked = true;
+          return this.speakPhrases(
+            ["reask1", this.fiscalEmailAsk],
+            this.state.phase,
+            fired,
+            `${this.fiscalEmailAsk === "askEmail" ? "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9" : "\u6C7A\u7B97\u6708"}\u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`
+          );
+        }
         return this.repair(fired, "\u6C7A\u7B97\u6708\u30FB\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u56DE\u7B54\u3068\u3057\u3066\u8AAD\u307F\u53D6\u308C\u305A");
       }
       this.unknownStreak = 0;

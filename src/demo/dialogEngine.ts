@@ -146,11 +146,11 @@ const TOOK_OVER = /(代わ|かわ|替わ)りました/;
 const HOLD_OVER = /お待たせ/;
 
 /**
- * 相槌・促しの語（「はい」「どうぞ」「どうぞ教えてください」「なるほど」）。
+ * 相槌・促しの語（「はい」「どうぞ」「どうぞ教えてください」「なるほど」「詳しく話してください」）。
  * 長いものを先に並べる（「ええと」を「ええ」＋「と」に割らないため）。
  */
 const PROMPT_WORD =
-  /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
+  /(お待たせ(いたしました|致しました|しました)|お願い(いたします|致します|します)|詳しく|くわしく|もう少し|もうちょっと|説明して(ください)?|お話し(ください)?|話して(ください)?|教えて(いただけますか|もらえますか|ください)|聞かせて(ください)?|続けて(ください)?|お聞きします|聞いて(います|ます)|伺います|聞きます|どうぞ|なるほど|そうなんですね|そうなんですか|そうですね|そうですか|そうです|大丈夫です|いいですよ|ええと|えーと|えっと|うーん|ふーん|へえ|へー|ほう|はあ|はぁ|はい|ええ|えー|うん|ああ|あー|それで|教えて|ね|よ|で)/g;
 const PROMPT_PUNCT = /[\s、。，．,.!！?？…〜~]/g;
 
 /** 続きを促す言い方。「大丈夫です、どうぞ」を断りと取り違えないために使う。 */
@@ -602,6 +602,10 @@ export class DialogEngine {
   private resumeP8 = false;
   /** 詳細ヒアリング（H1〜）へ移るときの前置きを済ませたか。1通話1回だけ挟む。 */
   private hearingCushioned = false;
+  /** P5 で決算月・メールアドレスの片方だけを聞いた質問（両方を聞く台本の代わり）。 */
+  private fiscalEmailAsk: PhraseId | null = null;
+  /** その片方だけの質問を聞き直したか。聞き直しは1回まで。 */
+  private fiscalEmailReasked = false;
   /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
   private publicBodyCorrected = false;
   /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -685,12 +689,7 @@ export class DialogEngine {
     if (collected === "headcount") {
       this.unknownStreak = 0;
       this.refusalStreak = 0;
-      return this.say(
-        "hearingFiscalEmail",
-        this.toPhase("P5"),
-        fired,
-        "切り返しへの回答から H5 を取得 → 決算月と送付先メールアドレスへ",
-      );
+      return this.askFiscalEmail(fired, "切り返しへの回答から H5 を取得");
     }
 
     // R2 の直後にまた「忙しい」と言われた場合は、食い下がらず丁寧に終話する
@@ -1001,7 +1000,35 @@ export class DialogEngine {
     this.unknownStreak = 0;
     this.expecting = null;
     const note = got.length > 0 ? `${[...new Set(got)].join("・")} を取得` : "反応を確認";
-    return this.say("hearingFiscalEmail", "P5", fired, `${note} → 決算月と送付先メールアドレスへ`);
+    return this.askFiscalEmail(fired, note);
+  }
+
+  /**
+   * 決算月と送付先メールアドレスを伺う（P5 へ）。
+   * 収録台本（hearingFiscalEmail）は「決算月と、送付先のメールアドレス」を両方聞くので、
+   * 片方をすでに聞けているときは、残りの片方だけを聞く録音に切り替える（聞けていることを聞き直さない）。
+   * 両方とも聞けていれば、そのまま日程打診へ進む。
+   */
+  private askFiscalEmail(fired: GuardrailId[], note: string): DialogReply {
+    const fiscal = Boolean(this.state.hearing.H7);
+    const email = Boolean(this.state.email);
+    if (fiscal && email && this.toPhase("P7") === "P7") {
+      return this.say("schedule", "P7", fired, `${note} → 決算月・メールアドレスとも取得済みのため日程打診へ`);
+    }
+    if (fiscal === email) {
+      return this.say("hearingFiscalEmail", this.toPhase("P5"), fired, `${note} → 決算月と送付先メールアドレスへ`);
+    }
+    const ask: PhraseId = fiscal ? "askEmail" : "askH7";
+    this.fiscalEmailAsk = ask;
+    // この後の言い直しで、両方を聞く台本に戻らないようにする
+    this.replayed.add("hearingFiscalEmail");
+    this.recapped.add("hearingFiscalEmail");
+    return this.speakPhrases(
+      [ask],
+      this.toPhase("P5"),
+      fired,
+      `${note} → ${fiscal ? "決算月は取得済みのため送付先メールアドレスのみ" : "メールアドレスは取得済みのため決算月のみ"}`,
+    );
   }
 
   /** P4/P5: 決算月・メールアドレスを聞いている場面。 */
@@ -1032,6 +1059,16 @@ export class DialogEngine {
       );
     }
     if (got.length === 0 && !YES.test(text)) {
+      // 片方だけを聞いた場合は、同じ質問を前置きを付けて1回だけ聞き直す（両方を聞く台本には戻らない）
+      if (this.fiscalEmailAsk && !this.fiscalEmailReasked) {
+        this.fiscalEmailReasked = true;
+        return this.speakPhrases(
+          ["reask1", this.fiscalEmailAsk],
+          this.state.phase,
+          fired,
+          `${this.fiscalEmailAsk === "askEmail" ? "メールアドレス" : "決算月"}が聞き取れず再質問`,
+        );
+      }
       return this.repair(fired, "決算月・メールアドレスの回答として読み取れず");
     }
     this.unknownStreak = 0;
