@@ -210,6 +210,25 @@ const POSTED_ELSEWHERE =
   /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)|(ホームページ|ＨＰ|HP|サイト|ウェブ|ネット)[^。]{0,6}(通り|とおり|の通り)/i;
 
 /**
+ * P8 で送付先・連絡先を「ホームページに載っているもの」で指定された言い方
+ * （「ホームページのでいいです」「HPに載ってるアドレスで」「サイトを見て」）。
+ * アドレスの文字列が出てこないので、メールアドレスの抽出では拾えない。
+ */
+const HP_ADDRESS =
+  /(ホームページ|ＨＰ|HP|ウェブサイト|ウェブ|Web|サイト|ネット)[^。]{0,12}?(アドレス|メール|番号|見て|ご覧|載って|掲載|出て|ので|のを|のに|のやつ|でいい|で結構|で大丈夫|でお願い|確認)/i;
+
+/** P8 で連絡先を HP 掲載のもので指定されたか。 */
+export function isHpAddress(text: string): boolean {
+  return HP_ADDRESS.test(text) || HP_REFERENCE.test(text) || POSTED_ELSEWHERE.test(text);
+}
+
+/** 送付先をホームページ掲載のアドレスで指定された場合に、メールアドレス欄へ入れる表記。 */
+export const HP_ADDRESS_LABEL = "ホームページ掲載のアドレス（弊社でサイトより確認）";
+
+/** 前日連絡の番号をホームページ掲載の番号で指定された場合に、連絡先欄へ入れる表記。 */
+export const HP_NUMBER_LABEL = "ホームページ掲載の番号（弊社でサイトより確認）";
+
+/**
  * 受付ガード: 「担当者のお名前は？」「誰に繋げばいい？」型の応答。
  *
  * これを用件確認（ご用件は？）と取り違えると概要説明を流してしまい、
@@ -512,6 +531,8 @@ export class DialogEngine {
    * 承諾と判別できない。打診の直後かどうかをこれで見る。
    */
   private meetingOfferedAt = -1;
+  /** P8 から HP 参照の切り返しで日程調整（P7）へ戻したか。承諾されたら P8 の残りから再開する。 */
+  private resumeP8 = false;
   /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
   private publicBodyCorrected = false;
   /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -579,6 +600,9 @@ export class DialogEngine {
     // 連絡先を聞いた直後の「この番号でいいです」は、番号が無くても回答として確定させる。
     // 「折り返して」「かけ直して」は多忙(R2)の言い回しにも当たるので、ガードレールより先に見る
     if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
+    // P8 で「ホームページのアドレスで」と言われたら、聞き取り失敗として聞き直さない
+    // （アドレスの文字列が出てこないので、聞き直しを続けると抜けられなくなる）
+    if (this.askingContactInP8() && isHpAddress(text)) return this.acceptHpAddress(text, fired);
 
     const g = this.byGuardrail(text, fired);
     if (g) return g;
@@ -991,6 +1015,11 @@ export class DialogEngine {
         duration_agreed: true,
       });
       this.unknownStreak = 0;
+      // P8 から HP 参照の切り返しで戻ってきた場合は、連絡先の確認をやり直さず残りの確認事項へ進める
+      if (this.resumeP8) {
+        this.resumeP8 = false;
+        return this.advanceP8(["日程を再確認"], fired);
+      }
       // 収録台本の次の一言が「直通の電話番号またはメールアドレス」なので、それを待つ
       this.pending = this.state.callbackPhone ? null : "callbackPhone";
       return this.say("contact", "P8", fired, "日程確定 → 連絡先の確認(P8)");
@@ -1099,6 +1128,45 @@ export class DialogEngine {
       );
     }
     return this.advanceP8([note], fired, "currentNumberAck");
+  }
+
+  /** P8 で連絡先（メールアドレス・前日連絡の番号）を聞いている場面か。 */
+  private askingContactInP8(): boolean {
+    if (this.state.phase !== "P8" || this.state.ended) return false;
+    return this.pending === "email" || this.pending === "emailConfirm" || this.pending === "callbackPhone";
+  }
+
+  /**
+   * P8 で「ホームページのアドレスで」と指定されたときの処理。
+   *
+   * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
+   * 指定された連絡先はこちらでサイトから確認するものとして確定し（読み上げる文字列が無いので復唱も済みとする）、
+   * HP参照の切り返し（r_hp_reference）を流して日程調整（P7）へ戻す。承諾されたら P8 の残りから再開する。
+   * 切り返しは1通話1回まで。すでに流していれば流し直さず、そのまま残りの確認事項へ進める。
+   */
+  private acceptHpAddress(text: string, fired: GuardrailId[]): DialogReply {
+    // 前日連絡の番号を聞いている場面で、アドレスは取得済みか番号の話をしているなら、番号の指定として受け取る
+    const number = this.pending === "callbackPhone" && (Boolean(this.state.email) || /(番号|電話)/.test(text));
+    if (number) applyExtracted(this.state, { callback_phone: HP_NUMBER_LABEL });
+    else applyExtracted(this.state, { email: HP_ADDRESS_LABEL, email_confirmed: true });
+    this.hpReferenced = true;
+    this.pending = null;
+    this.unknownStreak = 0;
+    this.expecting = null;
+    const note = number ? "前日連絡の番号をHP掲載のもので指定" : "送付先をHP掲載のアドレスで指定";
+
+    // meetingOfferedAt は HP 参照の切り返しを流したときにだけ入る
+    if (this.meetingOfferedAt < 0) {
+      this.meetingOfferedAt = this.state.turns.length;
+      this.resumeP8 = true;
+      return this.speakPhrases(
+        ["hpReference"],
+        this.toPhase("P7"),
+        fired,
+        `${note} → 聞き直さずHP参照の切り返しを流し、日程調整(P7)へ戻る`,
+      );
+    }
+    return this.advanceP8([`${note}（HP参照の切り返しは再生済みのため省略）`], fired);
   }
 
   /** そのスロットがすでに埋まっているか。 */

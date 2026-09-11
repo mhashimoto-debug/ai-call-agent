@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bulkExtract, DialogEngine, GUARDRAIL_LINE, isPromptOnly, type DialogReply } from "./dialogEngine.js";
+import {
+  bulkExtract,
+  DialogEngine,
+  GUARDRAIL_LINE,
+  HP_ADDRESS_LABEL,
+  HP_NUMBER_LABEL,
+  isPromptOnly,
+  type DialogReply,
+} from "./dialogEngine.js";
 import { AUDIO_BASE, PHRASES, VOICE_LINES, audioFiles } from "./voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
 import type { GuardrailId } from "../domain/types.js";
@@ -288,6 +296,87 @@ test("相槌・促しの判定: 相槌だけの発話と、中身のある回答
   for (const text of ["役員は2人です", "うちは保険でやってます", "どういうことですか", "特に考えてないですね", ""]) {
     assert.ok(!isPromptOnly(text), `回答を相槌と誤判定している: ${text}`);
   }
+});
+
+// ---------- P8: 送付先を「ホームページのアドレスで」と指定された ----------
+
+const ALL_HEARING = {
+  H1: "iDeCo・投資ともになし",
+  H2: "保険のみ",
+  H3: "56歳",
+  H4: "2名",
+  H5: "10名",
+  H6: "代表の判断で決裁可能",
+  H7: "3月",
+};
+
+/** 日程を確定させ、連絡先の確認（電話番号またはメールアドレス）まで進める。ヒアリング7項目は取得済みとする。 */
+function atContact() {
+  const ctx = fresh();
+  ctx.state.phase = "P7";
+  applyExtracted(ctx.state, ALL_HEARING);
+  assert.equal(ctx.dialog.respond("はい、その時間で大丈夫です").utterance, VOICE_LINES.contact.text);
+  return ctx;
+}
+
+/** さらに前日連絡の番号を答え、P8 でメールアドレスを尋ねるところまで進める。 */
+function atEmailSlot() {
+  const ctx = atContact();
+  assert.equal(ctx.dialog.respond("090-1234-5678 です").utterance, PHRASES.askEmail.text);
+  return ctx;
+}
+
+test("P8で『ホームページのでいいです』と回答した際に r_hp_reference が再生されて日程調整へ移行する", () => {
+  const { state, dialog } = atEmailSlot();
+  const r = dialog.respond("ホームページのでいいです");
+  assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
+  assert.equal(r.utterance, PHRASES.hpReference.text);
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}r_hp_reference.mp3`]);
+  assert.equal(r.phase, "P7");
+  assert.equal(state.email, HP_ADDRESS_LABEL);
+
+  // 日程調整に戻って承諾されたら、メールアドレスを聞き直さずに P8 の残りへ進む
+  const back = dialog.respond("はい、大丈夫です");
+  assert.equal(back.phase, "P8");
+  assert.doesNotMatch(back.utterance, /メールアドレス/, `メールアドレスを聞き直している: ${back.matched}`);
+  assert.equal(back.utterance, PHRASES.askCallbackWindow.text);
+
+  // 最後まで進めば締め(P9)に届き、アポ成立の条件も満たす
+  assert.match(dialog.respond("午前中なら繋がります").utterance, /カレンダー/);
+  assert.equal(dialog.respond("はい、入れておきます").utterance, VOICE_LINES.closing.text);
+  assert.ok(evaluateDod(state).passed, "DoD を満たしていない");
+});
+
+for (const text of [
+  "HPに載ってるアドレスで",
+  "サイトを見てください",
+  "ホームページに載ってるメールに送ってください",
+  "Webのアドレスでお願いします",
+  "ホームページに出てますので",
+]) {
+  test(`P8 HP参照: 「${text}」はメールアドレスの聞き取り失敗にせず、HP参照の切り返しへ進む`, () => {
+    const { state, dialog } = atEmailSlot();
+    const r = dialog.respond(text);
+    assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
+    assert.equal(r.utterance, PHRASES.hpReference.text);
+    assert.equal(r.phase, "P7");
+    assert.equal(state.email, HP_ADDRESS_LABEL);
+  });
+}
+
+test("P8 HP参照: 番号もホームページのでと言われたら、切り返しを流し直さず聞き直しにも落ちずに先へ進む", () => {
+  const { state, dialog } = atContact();
+  const first = dialog.respond("ホームページのでいいです");
+  assert.equal(first.utterance, PHRASES.hpReference.text);
+  assert.equal(state.email, HP_ADDRESS_LABEL);
+  assert.equal(dialog.respond("はい、大丈夫です").utterance, PHRASES.askCallbackPhone.text);
+
+  const second = dialog.respond("それもホームページに載ってる番号で");
+  assert.notEqual(second.utterance, PHRASES.hpReference.text, "HP参照の切り返しを繰り返している");
+  assert.doesNotMatch(second.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${second.matched}`);
+  assert.equal(state.callbackPhone, HP_NUMBER_LABEL);
+  assert.equal(second.utterance, PHRASES.askCallbackWindow.text);
+  assert.equal(state.ended, false);
 });
 
 // ---------- 想定外発話のフォールバック ----------

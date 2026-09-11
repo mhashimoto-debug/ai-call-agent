@@ -230,7 +230,9 @@ export const PHASES: Record<PhaseId, PhaseDef> = {
     ],
     transition:
       "H1〜H7・メールアドレス（復唱済み）・前日連絡先・希望時間帯が全部揃ったら P9 へ。1つでも欠けていたら P8 に留まる。",
-    allowedNext: ["P8", "P9", "P0X"],
+    // P7 戻りは、送付先を「ホームページのアドレスで」と指定されて HP 参照の切り返し
+    // （オンラインでのご挨拶の打診）を流し、日程調整に戻る経路
+    allowedNext: ["P8", "P9", "P7", "P0X"],
     targetElapsedSec: 390,
   },
 

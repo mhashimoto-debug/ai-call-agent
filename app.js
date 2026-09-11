@@ -216,7 +216,9 @@
         "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306F\u5FC5\u305A\u5FA9\u5531\u78BA\u8A8D\u3059\u308B\u3002"
       ],
       transition: "H1\u301CH7\u30FB\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\uFF08\u5FA9\u5531\u6E08\u307F\uFF09\u30FB\u524D\u65E5\u9023\u7D61\u5148\u30FB\u5E0C\u671B\u6642\u9593\u5E2F\u304C\u5168\u90E8\u63C3\u3063\u305F\u3089 P9 \u3078\u30021\u3064\u3067\u3082\u6B20\u3051\u3066\u3044\u305F\u3089 P8 \u306B\u7559\u307E\u308B\u3002",
-      allowedNext: ["P8", "P9", "P0X"],
+      // P7 戻りは、送付先を「ホームページのアドレスで」と指定されて HP 参照の切り返し
+      // （オンラインでのご挨拶の打診）を流し、日程調整に戻る経路
+      allowedNext: ["P8", "P9", "P7", "P0X"],
       targetElapsedSec: 390
     },
     P9: {
@@ -1238,6 +1240,12 @@
   var SCHEDULE_CONTEXT = /(時間|日時|その日|来週|水曜|午前|午後|それで|日程|参加|伺い|お願いします|入れて)/;
   var HP_REFERENCE = /(ホームページ|ＨＰ|HP|ウェブ|Web|ウェブサイト|サイト|ネット|インターネット|オンライン上|URL|ＵＲＬ|弊社サイト)[^。]{0,16}(見|ご覧|載って|掲載|出て|ござい|あります|ありま|確認|調べ|検索|参照)/i;
   var POSTED_ELSEWHERE = /(載って(ます|います|る|おり)|掲載して(ます|います|おり)|出ております)|(ホームページ|ＨＰ|HP|サイト|ウェブ|ネット)[^。]{0,6}(通り|とおり|の通り)/i;
+  var HP_ADDRESS = /(ホームページ|ＨＰ|HP|ウェブサイト|ウェブ|Web|サイト|ネット)[^。]{0,12}?(アドレス|メール|番号|見て|ご覧|載って|掲載|出て|ので|のを|のに|のやつ|でいい|で結構|で大丈夫|でお願い|確認)/i;
+  function isHpAddress(text) {
+    return HP_ADDRESS.test(text) || HP_REFERENCE.test(text) || POSTED_ELSEWHERE.test(text);
+  }
+  var HP_ADDRESS_LABEL = "\u30DB\u30FC\u30E0\u30DA\u30FC\u30B8\u63B2\u8F09\u306E\u30A2\u30C9\u30EC\u30B9\uFF08\u5F0A\u793E\u3067\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\uFF09";
+  var HP_NUMBER_LABEL = "\u30DB\u30FC\u30E0\u30DA\u30FC\u30B8\u63B2\u8F09\u306E\u756A\u53F7\uFF08\u5F0A\u793E\u3067\u30B5\u30A4\u30C8\u3088\u308A\u78BA\u8A8D\uFF09";
   var CONTACT_INTERROGATIVE = /(誰|どなた|どこ|どちら|何|なん|分か|わか|存じ|知ら|不明|教え)/;
   var CONTACT_TARGET = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名)/;
   var CONTACT_SUBJECT = /(担当者名|担当者|担当|窓口|部署|お名前|名前|氏名|誰|どなた)/;
@@ -1395,6 +1403,8 @@
      * 承諾と判別できない。打診の直後かどうかをこれで見る。
      */
     meetingOfferedAt = -1;
+    /** P8 から HP 参照の切り返しで日程調整（P7）へ戻したか。承諾されたら P8 の残りから再開する。 */
+    resumeP8 = false;
     /** 公的機関との誤認を訂正済みか。同じ訂正を繰り返さないために持つ。 */
     publicBodyCorrected = false;
     /** R7（不在）対応に切り替わっているか。戻り時間と折り返し先の確定だけを行う。 */
@@ -1445,6 +1455,7 @@
       const resumed = this.holding;
       this.holding = null;
       if (this.askingPhone() && isCurrentNumber(text)) return this.acceptCurrentNumber(text, fired);
+      if (this.askingContactInP8() && isHpAddress(text)) return this.acceptHpAddress(text, fired);
       const g = this.byGuardrail(text, fired);
       if (g) return g;
       if (collected === "headcount") {
@@ -1776,6 +1787,10 @@
           duration_agreed: true
         });
         this.unknownStreak = 0;
+        if (this.resumeP8) {
+          this.resumeP8 = false;
+          return this.advanceP8(["\u65E5\u7A0B\u3092\u518D\u78BA\u8A8D"], fired);
+        }
         this.pending = this.state.callbackPhone ? null : "callbackPhone";
         return this.say("contact", "P8", fired, "\u65E5\u7A0B\u78BA\u5B9A \u2192 \u9023\u7D61\u5148\u306E\u78BA\u8A8D(P8)");
       }
@@ -1869,6 +1884,40 @@
         );
       }
       return this.advanceP8([note], fired, "currentNumberAck");
+    }
+    /** P8 で連絡先（メールアドレス・前日連絡の番号）を聞いている場面か。 */
+    askingContactInP8() {
+      if (this.state.phase !== "P8" || this.state.ended) return false;
+      return this.pending === "email" || this.pending === "emailConfirm" || this.pending === "callbackPhone";
+    }
+    /**
+     * P8 で「ホームページのアドレスで」と指定されたときの処理。
+     *
+     * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
+     * 指定された連絡先はこちらでサイトから確認するものとして確定し（読み上げる文字列が無いので復唱も済みとする）、
+     * HP参照の切り返し（r_hp_reference）を流して日程調整（P7）へ戻す。承諾されたら P8 の残りから再開する。
+     * 切り返しは1通話1回まで。すでに流していれば流し直さず、そのまま残りの確認事項へ進める。
+     */
+    acceptHpAddress(text, fired) {
+      const number = this.pending === "callbackPhone" && (Boolean(this.state.email) || /(番号|電話)/.test(text));
+      if (number) applyExtracted(this.state, { callback_phone: HP_NUMBER_LABEL });
+      else applyExtracted(this.state, { email: HP_ADDRESS_LABEL, email_confirmed: true });
+      this.hpReferenced = true;
+      this.pending = null;
+      this.unknownStreak = 0;
+      this.expecting = null;
+      const note = number ? "\u524D\u65E5\u9023\u7D61\u306E\u756A\u53F7\u3092HP\u63B2\u8F09\u306E\u3082\u306E\u3067\u6307\u5B9A" : "\u9001\u4ED8\u5148\u3092HP\u63B2\u8F09\u306E\u30A2\u30C9\u30EC\u30B9\u3067\u6307\u5B9A";
+      if (this.meetingOfferedAt < 0) {
+        this.meetingOfferedAt = this.state.turns.length;
+        this.resumeP8 = true;
+        return this.speakPhrases(
+          ["hpReference"],
+          this.toPhase("P7"),
+          fired,
+          `${note} \u2192 \u805E\u304D\u76F4\u3055\u305AHP\u53C2\u7167\u306E\u5207\u308A\u8FD4\u3057\u3092\u6D41\u3057\u3001\u65E5\u7A0B\u8ABF\u6574(P7)\u3078\u623B\u308B`
+        );
+      }
+      return this.advanceP8([`${note}\uFF08HP\u53C2\u7167\u306E\u5207\u308A\u8FD4\u3057\u306F\u518D\u751F\u6E08\u307F\u306E\u305F\u3081\u7701\u7565\uFF09`], fired);
     }
     /** そのスロットがすでに埋まっているか。 */
     isFilled(slot) {
