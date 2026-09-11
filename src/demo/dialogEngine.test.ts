@@ -535,8 +535,10 @@ test("P3で決算月を先に答えていれば、P5では決算月を聞き直�
   assert.equal(state.hearing.H7, "3月");
   assert.notEqual(r.utterance, VOICE_LINES.hearingFiscalEmail.text, "取得済みの決算月を聞き直している");
   assert.doesNotMatch(r.utterance, /決算月/);
-  assert.equal(r.utterance, PHRASES.askEmail.text);
-  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}p8_email.mp3`]);
+  assert.equal(r.utterance, "恐れ入ります、送付先のメールアドレスを伺えますでしょうか？");
+  assert.deepEqual(audioFiles(r.segments), [`${AUDIO_BASE}recap_r4_document.mp3`]);
+  // 日程を決める前なので、オンライン会議の URL には触れない
+  assert.doesNotMatch(r.utterance, /オンライン会議|URL/, "日程確定前に会議の URL の話をしている");
   assert.equal(r.phase, "P5");
 
   // メールアドレスを答えれば日程打診へ
@@ -547,8 +549,9 @@ test("P5 メールアドレスだけを聞いて聞き取れなかったとき�
   const { dialog } = atHeadcount();
   dialog.respond("20人くらいで、決算は3月です"); // → メールアドレスのみ
   const again = dialog.respond("えーっと");
-  assert.deepEqual(segTexts(again), [PHRASES.reask1.text, PHRASES.askEmail.text]);
+  assert.deepEqual(segTexts(again), [PHRASES.reask2.text, PHRASES.recapDocument.text]);
   assert.doesNotMatch(again.utterance, /決算月/);
+  assert.doesNotMatch(again.utterance, /恐れ入ります.*恐れ入ります/, "「恐れ入ります」を重ねている");
 });
 
 test("P3でメールアドレスを先に答えていれば、P5では決算月だけを尋ねる", () => {

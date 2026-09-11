@@ -1836,7 +1836,7 @@
       if (fiscal === email) {
         return this.say("hearingFiscalEmail", this.toPhase("P5"), fired, `${note} \u2192 \u6C7A\u7B97\u6708\u3068\u9001\u4ED8\u5148\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3078`);
       }
-      const ask = fiscal ? "askEmail" : "askH7";
+      const ask = fiscal ? "recapDocument" : "askH7";
       this.fiscalEmailAsk = ask;
       this.replayed.add("hearingFiscalEmail");
       this.recapped.add("hearingFiscalEmail");
@@ -1873,11 +1873,13 @@
       if (got.length === 0 && !YES.test(text)) {
         if (this.fiscalEmailAsk && !this.fiscalEmailReasked) {
           this.fiscalEmailReasked = true;
+          const ask = this.fiscalEmailAsk;
+          const prefix = PHRASES[ask].text.startsWith("\u6050\u308C\u5165\u308A\u307E\u3059") ? "reask2" : "reask1";
           return this.speakPhrases(
-            ["reask1", this.fiscalEmailAsk],
+            [prefix, ask],
             this.state.phase,
             fired,
-            `${this.fiscalEmailAsk === "askEmail" ? "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9" : "\u6C7A\u7B97\u6708"}\u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`
+            `${ask === "askH7" ? "\u6C7A\u7B97\u6708" : "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9"}\u304C\u805E\u304D\u53D6\u308C\u305A\u518D\u8CEA\u554F`
           );
         }
         return this.repair(fired, "\u6C7A\u7B97\u6708\u30FB\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u306E\u56DE\u7B54\u3068\u3057\u3066\u8AAD\u307F\u53D6\u308C\u305A");

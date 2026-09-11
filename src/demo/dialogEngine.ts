@@ -1018,7 +1018,9 @@ export class DialogEngine {
     if (fiscal === email) {
       return this.say("hearingFiscalEmail", this.toPhase("P5"), fired, `${note} → 決算月と送付先メールアドレスへ`);
     }
-    const ask: PhraseId = fiscal ? "askEmail" : "askH7";
+    // 決算月だけ取得済みなら送付先メールアドレスのみを伺う。P8 用の askEmail は「オンライン会議のURL」に触れていて
+    // 日程を決める前には先走るので、recapDocument（「恐れ入ります、送付先のメールアドレスを…」）を使う
+    const ask: PhraseId = fiscal ? "recapDocument" : "askH7";
     this.fiscalEmailAsk = ask;
     // この後の言い直しで、両方を聞く台本に戻らないようにする
     this.replayed.add("hearingFiscalEmail");
@@ -1062,11 +1064,14 @@ export class DialogEngine {
       // 片方だけを聞いた場合は、同じ質問を前置きを付けて1回だけ聞き直す（両方を聞く台本には戻らない）
       if (this.fiscalEmailAsk && !this.fiscalEmailReasked) {
         this.fiscalEmailReasked = true;
+        const ask = this.fiscalEmailAsk;
+        // 質問が「恐れ入ります、」から入るときは、前置きで「恐れ入ります」を重ねない
+        const prefix: PhraseId = PHRASES[ask].text.startsWith("恐れ入ります") ? "reask2" : "reask1";
         return this.speakPhrases(
-          ["reask1", this.fiscalEmailAsk],
+          [prefix, ask],
           this.state.phase,
           fired,
-          `${this.fiscalEmailAsk === "askEmail" ? "メールアドレス" : "決算月"}が聞き取れず再質問`,
+          `${ask === "askH7" ? "決算月" : "メールアドレス"}が聞き取れず再質問`,
         );
       }
       return this.repair(fired, "決算月・メールアドレスの回答として読み取れず");
