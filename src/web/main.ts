@@ -32,6 +32,18 @@ import { DialogEngine } from "../demo/dialogEngine.js";
 import { TransferEngine, type AgentMode } from "../demo/transferEngine.js";
 import type { SpeechSegment } from "../demo/voiceLines.js";
 import { detectGuardrails } from "../domain/guardrails.js";
+import {
+  STATUS_LABEL,
+  addRecord,
+  buildAppointmentRecord,
+  buildTransferRecord,
+  loadHistory,
+  saveHistory,
+  type CallRecord,
+  type HistoryStorage,
+  type LogLine,
+} from "./history.js";
+import { initDetail, openDetail, renderHistory } from "./historyView.js";
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -48,6 +60,9 @@ const mic = new MicInput();
 let mode: AgentMode = "appointment";
 /** 通話が始まっているか（第一声を流したか）。 */
 let callStarted = false;
+/** 通話の開始時刻と、架電履歴に残す発話ログ（タイムスタンプ付き）。 */
+let callStartedAt = 0;
+let callLog: LogLine[] = [];
 
 // ---------- 描画 ----------
 
@@ -367,12 +382,17 @@ async function handleCustomerUtterance(text: string): Promise<void> {
   if (busy || state.ended) return;
   busy = true;
   syncButtons();
+  // 再生中にリセットされても、この通話の記録として保存できるよう手元に持っておく
+  const call = state;
+  const log = callLog;
+  const startedAt = callStartedAt;
   try {
     if (transcript().querySelector(".empty")) transcript().innerHTML = "";
 
     const guardrails = detectGuardrails(text);
     dialog.pushCustomer(text, guardrails);
     const custNode = pushMessage("cust", "相手", text);
+    logLine("相手", text);
     if (guardrails.length > 0) {
       pushFlag(
         `ガードレール検知: ${guardrails.map((g) => `${g}（${GUARDRAILS[g].trigger}）`).join(" / ")}`,
@@ -393,6 +413,7 @@ async function handleCustomerUtterance(text: string): Promise<void> {
       lastPhase = r.phase;
     }
     const node = pushMessage("ai", "AI", r.utterance);
+    logLine("AI", r.utterance);
     // 「なぜこう返したか」と、どの音源で喋るかを内部メモとして出す
     const source = describeSource(r.segments);
     const why = el("div", "flag", `判定: ${r.matched} ／ 音源: ${source}`);
@@ -403,6 +424,12 @@ async function handleCustomerUtterance(text: string): Promise<void> {
     await speakReply(r.segments);
     node.classList.remove("speaking");
     renderAll();
+    if (call.ended) {
+      saveCall(
+        call,
+        buildAppointmentRecord(call, { log, startedAt, endedAt: Date.now(), company: DEMO_SCENARIO.companyName }),
+      );
+    }
   } finally {
     busy = false;
     syncButtons();
@@ -417,9 +444,26 @@ async function handleTransferUtterance(text: string): Promise<void> {
   if (busy || transfer.finished) return;
   busy = true;
   syncButtons();
+  const call = transfer;
+  const log = callLog;
+  const startedAt = callStartedAt;
+  const saveIfFinished = (): void => {
+    const outcome = call.result;
+    if (outcome === "calling") return;
+    saveCall(
+      call,
+      buildTransferRecord(outcome, call.absenceRecord, {
+        log,
+        startedAt,
+        endedAt: Date.now(),
+        company: DEMO_SCENARIO.companyName,
+      }),
+    );
+  };
   try {
     if (transcript().querySelector(".empty")) transcript().innerHTML = "";
     const custNode = pushMessage("cust", "相手", text);
+    logLine("相手", text);
     scrollToActive(custNode);
 
     const r = transfer.respond(text);
@@ -437,19 +481,23 @@ async function handleTransferUtterance(text: string): Promise<void> {
       stopVoice();
       mic.abort();
       pushFlag(`判定: ${r.matched}`);
+      logLine("システム", "担当者接続を検知 → オペレーターへ引き継ぎ（AI は発話を停止）");
       showHandover(true);
       renderAll();
+      saveIfFinished();
       return;
     }
 
     pushFlag(`判定: ${r.matched}`);
     const node = pushMessage("ai", "AI", r.utterance);
+    logLine("AI", r.utterance);
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
     await speakReply(r.segments);
     node.classList.remove("speaking");
     renderAll();
+    saveIfFinished();
   } finally {
     busy = false;
     syncButtons();
@@ -527,6 +575,8 @@ function applySetup(): void {
 async function startCall(): Promise<void> {
   busy = true;
   callStarted = true;
+  callStartedAt = Date.now();
+  callLog = [];
   syncButtons();
   try {
     if (transcript().querySelector(".empty")) transcript().innerHTML = "";
@@ -536,6 +586,7 @@ async function startCall(): Promise<void> {
       lastPhase = r.phase;
     }
     const node = pushMessage("ai", "AI", r.utterance);
+    logLine("AI", r.utterance);
     node.classList.add("speaking");
     renderAll();
     scrollToActive(node);
@@ -576,10 +627,70 @@ function reset(): void {
   window.scrollTo({ top: 0 });
 }
 
+// ---------- 架電履歴（ダッシュボード） ----------
+
+/** localStorage。プライベートブラウズ等で使えないときは null（保存せずに動かす）。 */
+function browserStorage(): HistoryStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+let history: CallRecord[] = loadHistory(browserStorage());
+/** 保存済みの通話。同じ通話を二重に記録しないため、通話ごとの状態オブジェクトで覚える。 */
+const savedCalls = new WeakSet<object>();
+
+function logLine(who: LogLine["who"], text: string): void {
+  callLog.push({ at: Date.now(), who, text });
+}
+
+/** 終了した通話を架電履歴の先頭に追加し、保存する。 */
+function saveCall(call: object, record: CallRecord): void {
+  if (savedCalls.has(call)) return;
+  savedCalls.add(call);
+  history = addRecord(history, record);
+  const saved = saveHistory(browserStorage(), history);
+  renderHistory(history, openDetail);
+  setMicNote(
+    saved
+      ? `通話を終了し、架電履歴に保存しました（${STATUS_LABEL[record.status]}）。「リセット」で次の架電を始められます。`
+      : "通話を終了しました。このブラウザでは保存が使えないため、履歴はページを閉じると消えます。",
+    !saved,
+  );
+}
+
+function setView(view: "call" | "history"): void {
+  const isHistory = view === "history";
+  $("callView").hidden = isHistory;
+  $("historyView").hidden = !isHistory;
+  document.body.classList.toggle("view-history", isHistory);
+  for (const [id, on] of [["tabCall", !isHistory], ["tabHistory", isHistory]] as const) {
+    $(id).classList.toggle("on", on);
+    $(id).setAttribute("aria-selected", String(on));
+  }
+  // 「最新の発話に追従」ボタンは通話デモの画面だけで出す
+  $("follow").hidden = isHistory || follow;
+  if (isHistory) renderHistory(history, openDetail);
+  window.scrollTo({ top: 0 });
+}
+
 // ---------- 起動 ----------
 
 renderScenario();
 renderAll();
+renderHistory(history, openDetail);
+initDetail();
+$("tabCall").addEventListener("click", () => setView("call"));
+$("tabHistory").addEventListener("click", () => setView("history"));
+$("historyClear").addEventListener("click", () => {
+  if (history.length === 0) return;
+  if (!window.confirm(`架電履歴 ${history.length} 件をすべて削除します。よろしいですか？`)) return;
+  history = [];
+  saveHistory(browserStorage(), history);
+  renderHistory(history, openDetail);
+});
 
 $("mic").addEventListener("click", () => {
   if (!callStarted) {

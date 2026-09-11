@@ -207,11 +207,99 @@
     display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 20px;
     border: 1px solid var(--border); color: var(--muted); margin: 2px 3px 2px 0;
   }
+
+  [hidden] { display: none !important; }
+
+  /* 表示の切り替え（通話デモ ／ 架電履歴） */
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .count {
+    display: inline-block; min-width: 20px; margin-left: 5px; padding: 0 6px; border-radius: 10px;
+    font-size: 11.5px; line-height: 18px; text-align: center;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+  body.view-history .controls, body.view-history #handover { display: none !important; }
+
+  /* 架電履歴ダッシュボード */
+  .history {
+    padding: 16px 20px 40px; max-width: 1440px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  .slabel { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .svalue { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.4; }
+  .ssub { font-size: 11.5px; color: var(--faint); }
+  .history .panel > h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .h2note { font-weight: 400; letter-spacing: 0; color: var(--faint); }
+  .linkbtn { margin-left: auto; font-size: 12px; padding: 4px 10px; color: var(--ng); letter-spacing: 0; }
+  .tablewrap { overflow-x: auto; }
+  table.hist { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.hist th {
+    text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
+    padding: 9px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  table.hist td { padding: 11px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.hist .n { text-align: right; font-variant-numeric: tabular-nums; }
+  table.hist tbody tr { cursor: pointer; transition: background .12s; }
+  table.hist tbody tr:hover, table.hist tbody tr:focus-visible {
+    background: color-mix(in srgb, var(--accent) 8%, transparent); outline: none;
+  }
+  table.hist td.go { color: var(--accent); font-size: 12.5px; text-align: right; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 20px; line-height: 1.6; }
+  .badge.st-appointment { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  .badge.st-handover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .badge.st-absent { background: var(--warn-bg); color: var(--warn); }
+  .badge.st-ended, .badge.st-rejected { background: color-mix(in srgb, var(--faint) 18%, transparent); color: var(--muted); }
+  .history .empty { padding: 36px 16px; }
+
+  /* 案件詳細（モーダル） */
+  dialog.detail {
+    width: min(820px, 94vw); max-height: 88vh; padding: 0;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--panel); color: var(--text); box-shadow: 0 12px 48px rgba(0,0,0,.3);
+  }
+  dialog.detail::backdrop { background: rgba(10, 14, 20, .5); }
+  .dwrap { display: flex; flex-direction: column; max-height: 88vh; }
+  .dhead { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .dtitle { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dmeta { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  #detailClose { margin-left: auto; padding: 4px 11px; }
+  .dbody { overflow-y: auto; padding: 4px 20px 22px; }
+  .dbody h3 { font-size: 13px; letter-spacing: .04em; color: var(--muted); margin: 18px 0 8px; }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.kv th {
+    text-align: left; font-weight: 600; color: var(--muted); width: 38%;
+    padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
+  }
+  table.kv td { padding: 6px 8px; border-bottom: 1px solid var(--border); word-break: break-all; }
+  table.kv td.missing { color: var(--faint); }
+  ol.dlog { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
+  ol.dlog li {
+    display: grid; grid-template-columns: 70px 52px minmax(0, 1fr); gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  ol.dlog li.none { display: block; color: var(--faint); }
+  ol.dlog .t { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; padding-top: 2px; }
+  ol.dlog .t small { display: block; font-size: 11px; }
+  ol.dlog .dwho { font-size: 12px; font-weight: 700; padding-top: 2px; }
+  ol.dlog .dwho.ai { color: var(--ai); }
+  ol.dlog .dwho.cust { color: var(--cust); }
+  ol.dlog .dwho.sys { color: var(--accent); }
+  @media (max-width: 600px) {
+    ol.dlog li { grid-template-columns: 1fr; gap: 2px; }
+    ol.dlog .t small { display: inline; margin-left: 6px; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <div class="title">BPSR 企業型DC アポイント獲得 AI架電エージェント</div>
+  <div class="topbar">
+    <div class="title">BPSR 企業型DC アポイント獲得 AI架電エージェント</div>
+    <div class="modes" role="tablist" aria-label="表示の切り替え">
+      <button id="tabCall" class="mode on" type="button" role="tab" aria-selected="true">📞 通話デモ</button>
+      <button id="tabHistory" class="mode" type="button" role="tab" aria-selected="false">📋 架電履歴<span id="historyCount" class="count">0</span></button>
+    </div>
+  </div>
   <div class="sub" id="scenario"></div>
   <div class="controls">
     <div class="modes" role="group" aria-label="エージェントのモード">
@@ -231,7 +319,7 @@
   <span>担当者接続を検知しました！オペレーターへ引き継いでください</span>
 </div>
 
-<main>
+<main id="callView">
   <section class="panel">
     <h2>通話ログ</h2>
     <div id="transcript"><div class="empty">「通話開始」で架電を始めます</div></div>
@@ -286,6 +374,49 @@
     </section>
   </aside>
 </main>
+
+<section id="historyView" class="history" hidden>
+  <div class="stats" id="historyStats"></div>
+  <section class="panel">
+    <h2>
+      架電履歴
+      <span class="h2note">通話が終わると自動で追加されます（このブラウザに保存・最大200件）</span>
+      <button id="historyClear" class="linkbtn" type="button">履歴をすべて削除</button>
+    </h2>
+    <div class="tablewrap" id="historyTable">
+      <table class="hist">
+        <thead>
+          <tr><th>日時</th><th>企業名</th><th>タイプ</th><th>ステータス</th><th class="n">通話時間</th><th></th></tr>
+        </thead>
+        <tbody id="historyRows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="historyEmpty">
+      まだ架電履歴はありません。「📞 通話デモ」で電話を最後まで終えると、ここに自動で追加されます。
+    </div>
+  </section>
+</section>
+
+<dialog id="detail" class="detail" aria-labelledby="detailTitle">
+  <div class="dwrap">
+    <div class="dhead">
+      <div>
+        <div class="dtitle" id="detailTitle"></div>
+        <div class="dmeta" id="detailMeta"></div>
+      </div>
+      <button id="detailClose" type="button" aria-label="閉じる">✕</button>
+    </div>
+    <div class="dbody">
+      <h3 id="detailCheckTitle">1. アポ成立チェック</h3>
+      <ul class="check" id="detailChecks"></ul>
+      <div class="verdict" id="detailVerdict"></div>
+      <h3 id="detailDataTitle">2. ヒアリング7項目・連絡先</h3>
+      <table class="kv"><tbody id="detailData"></tbody></table>
+      <h3>3. 通話全文ログ（タイムスタンプ付き）</h3>
+      <ol class="dlog" id="detailLog"></ol>
+    </div>
+  </div>
+</dialog>
 
 <button id="follow" hidden>⤓ 最新の発話に追従</button>
 

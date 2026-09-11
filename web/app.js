@@ -2166,7 +2166,9 @@
     say(id, proposed, fired, matched) {
       this.said.add(id);
       this.lastLine = id;
-      return this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
+      const reply = this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
+      if (id === "closing") this.state.ended = true;
+      return reply;
     }
     /**
      * 切り返しを流す。すでに同じ台本を流していれば、同じ文言を繰り返さず要点だけ聞き直す。
@@ -2240,6 +2242,10 @@
   };
 
   // src/demo/transferEngine.ts
+  var AGENT_MODE_LABEL = {
+    appointment: "\u30BF\u30A4\u30D7A: \u30A2\u30DD\u7372\u5F97",
+    transfer: "\u30BF\u30A4\u30D7B: \u53D7\u4ED8\u7A81\u7834"
+  };
   var HANDOVER_PATTERNS = [
     // 保留・取次ぎの合図
     /(少々|少し|しばらく|ちょっと)[^。]{0,4}お待ち/,
@@ -2373,11 +2379,251 @@
     }
   };
 
-  // src/web/main.ts
+  // src/web/history.ts
+  var HISTORY_KEY = "ai-call-agent:call-history:v1";
+  var HISTORY_LIMIT = 200;
+  var STATUS_LABEL = {
+    appointment: "\u30A2\u30DD\u7372\u5F97",
+    ended: "\u7D42\u8A71\uFF08\u30A2\u30DD\u672A\u6210\u7ACB\uFF09",
+    handover: "\u62C5\u5F53\u8005\u3078\u5F15\u304D\u7D99\u304E",
+    absent: "\u4E0D\u5728",
+    rejected: "\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A\u7D42\u8A71"
+  };
+  function newId(startedAt) {
+    return `${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+  function buildAppointmentRecord(state2, meta) {
+    const dod = evaluateDod(state2);
+    const data = [
+      ...HEARING_SLOTS.map((s) => ({ label: `${s.id} ${s.label}`, value: state2.hearing[s.id] })),
+      {
+        label: "\u5546\u8AC7\u65E5\u6642",
+        value: state2.appointmentDate && state2.appointmentTime ? `${state2.appointmentDate} ${state2.appointmentTime}` : null
+      },
+      {
+        label: "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9",
+        value: state2.email ? `${state2.email}${state2.emailConfirmed ? "\uFF08\u5FA9\u5531\u78BA\u8A8D\u6E08\u307F\uFF09" : "\uFF08\u5FA9\u5531\u672A\u78BA\u8A8D\uFF09"}` : null
+      },
+      { label: "\u524D\u65E5\u78BA\u8A8D\u306E\u9023\u7D61\u5148\uFF08\u76F4\u901A\u756A\u53F7\uFF09", value: state2.callbackPhone },
+      { label: "\u524D\u65E5\u9023\u7D61\u306E\u5E0C\u671B\u6642\u9593\u5E2F", value: state2.callbackWindow }
+    ];
+    return {
+      id: newId(meta.startedAt),
+      mode: "appointment",
+      company: meta.company,
+      startedAt: meta.startedAt,
+      endedAt: meta.endedAt,
+      status: dod.passed ? "appointment" : "ended",
+      dod: { passed: dod.passed, items: dod.items.map(({ label, ok, detail }) => ({ label, ok, detail })) },
+      data,
+      log: meta.log.map((l) => ({ ...l }))
+    };
+  }
+  function buildTransferRecord(outcome, absence, meta) {
+    return {
+      id: newId(meta.startedAt),
+      mode: "transfer",
+      company: meta.company,
+      startedAt: meta.startedAt,
+      endedAt: meta.endedAt,
+      status: outcome,
+      dod: null,
+      data: [
+        { label: "\u53D7\u4ED8\u7A81\u7834\u306E\u7D50\u679C", value: STATUS_LABEL[outcome] },
+        { label: "\u4E0D\u5728\u6642\u306E\u76F8\u624B\u306E\u767A\u8A00", value: absence?.said ?? null },
+        { label: "\u805E\u304D\u53D6\u308C\u305F\u623B\u308A\u6642\u9593", value: absence?.returnTime ?? null }
+      ],
+      log: meta.log.map((l) => ({ ...l }))
+    };
+  }
+  var MODES = ["appointment", "transfer"];
+  function isCallRecord(v) {
+    if (typeof v !== "object" || v === null) return false;
+    const r = v;
+    const dod = r.dod;
+    return typeof r.id === "string" && typeof r.company === "string" && typeof r.mode === "string" && MODES.includes(r.mode) && typeof r.startedAt === "number" && typeof r.endedAt === "number" && typeof r.status === "string" && Object.hasOwn(STATUS_LABEL, r.status) && Array.isArray(r.data) && Array.isArray(r.log) && (dod === null || typeof dod === "object" && Array.isArray(dod.items));
+  }
+  function loadHistory(storage) {
+    if (!storage) return [];
+    try {
+      const raw = storage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(isCallRecord).slice(0, HISTORY_LIMIT) : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveHistory(storage, records) {
+    if (!storage) return false;
+    try {
+      storage.setItem(HISTORY_KEY, JSON.stringify(records.slice(0, HISTORY_LIMIT)));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function addRecord(records, record) {
+    return [record, ...records.filter((r) => r.id !== record.id)].slice(0, HISTORY_LIMIT);
+  }
+  function summarize(records) {
+    const a = records.filter((r) => r.mode === "appointment");
+    const b = records.filter((r) => r.mode === "transfer");
+    return {
+      total: records.length,
+      appointmentCalls: a.length,
+      appointments: a.filter((r) => r.status === "appointment").length,
+      transferCalls: b.length,
+      handovers: b.filter((r) => r.status === "handover").length
+    };
+  }
+  var pad = (n) => String(n).padStart(2, "0");
+  function formatDuration(ms) {
+    const sec = Math.max(0, Math.round(ms / 1e3));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}\u5206${pad(s)}\u79D2` : `${s}\u79D2`;
+  }
+  function formatDateTime(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function formatClock(ts) {
+    const d = new Date(ts);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  function formatOffset(ms) {
+    const sec = Math.max(0, Math.round(ms / 1e3));
+    return `+${pad(Math.floor(sec / 60))}:${pad(sec % 60)}`;
+  }
+
+  // src/web/historyView.ts
   var $ = (id) => {
-    const el2 = document.getElementById(id);
-    if (!el2) throw new Error(`#${id} \u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093`);
-    return el2;
+    const node = document.getElementById(id);
+    if (!node) throw new Error(`#${id} \u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093`);
+    return node;
+  };
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== void 0) node.textContent = text;
+    return node;
+  }
+  var badge = (r) => el("span", `badge st-${r.status}`, STATUS_LABEL[r.status]);
+  function renderHistory(records, onOpen) {
+    $("historyCount").textContent = String(records.length);
+    const s = summarize(records);
+    const tiles = [
+      ["\u7DCF\u67B6\u96FB\u6570", `${s.total}\u4EF6`, "\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u306B\u4FDD\u5B58\u3055\u308C\u305F\u901A\u8A71"],
+      ["\u30A2\u30DD\u7372\u5F97", `${s.appointments}\u4EF6`, `\u30BF\u30A4\u30D7A ${s.appointmentCalls}\u4EF6\u4E2D`],
+      [
+        "\u30A2\u30DD\u7372\u5F97\u7387",
+        s.appointmentCalls > 0 ? `${Math.round(s.appointments / s.appointmentCalls * 100)}%` : "\u2014",
+        "\u30BF\u30A4\u30D7A\u306E\u901A\u8A71\u306B\u5360\u3081\u308B\u5272\u5408"
+      ],
+      ["\u62C5\u5F53\u8005\u3078\u5F15\u304D\u7D99\u304E", `${s.handovers}\u4EF6`, `\u30BF\u30A4\u30D7B ${s.transferCalls}\u4EF6\u4E2D`]
+    ];
+    const stats = $("historyStats");
+    stats.innerHTML = "";
+    for (const [label, value, sub] of tiles) {
+      const tile = el("div", "stat");
+      tile.append(el("div", "slabel", label), el("div", "svalue", value), el("div", "ssub", sub));
+      stats.append(tile);
+    }
+    const tbody = $("historyRows");
+    tbody.innerHTML = "";
+    $("historyEmpty").hidden = records.length > 0;
+    $("historyTable").hidden = records.length === 0;
+    for (const r of records) {
+      const tr = el("tr");
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.setAttribute("aria-label", `${formatDateTime(r.startedAt)} ${r.company} ${STATUS_LABEL[r.status]}\uFF1A\u8A73\u7D30\u3092\u958B\u304F`);
+      const status = el("td");
+      status.append(badge(r));
+      tr.append(
+        el("td", "", formatDateTime(r.startedAt)),
+        el("td", "", r.company),
+        el("td", "", AGENT_MODE_LABEL[r.mode]),
+        status,
+        el("td", "n", formatDuration(r.endedAt - r.startedAt)),
+        el("td", "go", "\u8A73\u7D30 \u203A")
+      );
+      tr.addEventListener("click", () => onOpen(r));
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(r);
+        }
+      });
+      tbody.append(tr);
+    }
+  }
+  function openDetail(r) {
+    const title = $("detailTitle");
+    title.textContent = r.company;
+    title.append(badge(r));
+    $("detailMeta").textContent = `${formatDateTime(r.startedAt)} \uFF0F ${AGENT_MODE_LABEL[r.mode]} \uFF0F \u901A\u8A71\u6642\u9593 ${formatDuration(r.endedAt - r.startedAt)}`;
+    const checks = $("detailChecks");
+    checks.innerHTML = "";
+    const verdict = $("detailVerdict");
+    const items = r.dod ? r.dod.items : [{ label: "\u62C5\u5F53\u8005\u3078\u306E\u53D6\u6B21\u304E", ok: r.status === "handover", detail: STATUS_LABEL[r.status] }];
+    for (const i of items) {
+      const li = el("li", i.ok ? "ok" : "ng");
+      li.append(el("span", "mark", i.ok ? "\u25CB" : "\xD7"));
+      const body = el("span");
+      body.append(document.createTextNode(i.label), el("span", "detail", i.detail));
+      li.append(body);
+      checks.append(li);
+    }
+    const passed = r.dod ? r.dod.passed : r.status === "handover";
+    $("detailCheckTitle").textContent = r.dod ? "1. \u30A2\u30DD\u6210\u7ACB\u30C1\u30A7\u30C3\u30AF" : "1. \u53D7\u4ED8\u7A81\u7834\u306E\u7D50\u679C";
+    verdict.className = `verdict ${passed ? "pass" : "fail"}`;
+    verdict.textContent = r.dod ? passed ? "\u2705 \u30A2\u30DD\u6210\u7ACB\uFF08\u5168\u9805\u76EE\u25CB\uFF09" : "\u672A\u6210\u7ACB\uFF08\u672A\u5145\u8DB3\u3042\u308A\uFF09" : passed ? "\u2705 \u62C5\u5F53\u8005\u3078\u5F15\u304D\u7D99\u304E" : `\u53D6\u6B21\u304E\u306B\u81F3\u3089\u305A\uFF08${STATUS_LABEL[r.status]}\uFF09`;
+    $("detailDataTitle").textContent = r.dod ? "2. \u30D2\u30A2\u30EA\u30F3\u30B07\u9805\u76EE\u30FB\u9023\u7D61\u5148" : "2. \u53D6\u5F97\u30C7\u30FC\u30BF";
+    const data = $("detailData");
+    data.innerHTML = "";
+    for (const d of r.data) {
+      const tr = el("tr");
+      tr.append(el("th", "", d.label), el("td", d.value ? "" : "missing", d.value ?? "\u672A\u53D6\u5F97"));
+      data.append(tr);
+    }
+    const log = $("detailLog");
+    log.innerHTML = "";
+    for (const l of r.log) {
+      const li = el("li");
+      const t = el("span", "t", formatClock(l.at));
+      t.append(el("small", "", formatOffset(l.at - r.startedAt)));
+      const cls = l.who === "AI" ? "ai" : l.who === "\u76F8\u624B" ? "cust" : "sys";
+      li.append(t, el("span", `dwho ${cls}`, l.who), el("span", "dtext", l.text));
+      log.append(li);
+    }
+    if (r.log.length === 0) log.append(el("li", "none", "\u30ED\u30B0\u306F\u3042\u308A\u307E\u305B\u3093"));
+    const dlg = $("detail");
+    if (typeof dlg.showModal === "function") {
+      if (!dlg.open) dlg.showModal();
+    } else {
+      dlg.setAttribute("open", "");
+    }
+    dlg.querySelector(".dbody")?.scrollTo(0, 0);
+  }
+  function initDetail() {
+    const dlg = $("detail");
+    const close = () => {
+      if (typeof dlg.close === "function") dlg.close();
+      else dlg.removeAttribute("open");
+    };
+    $("detailClose").addEventListener("click", close);
+    dlg.addEventListener("click", (e) => {
+      if (e.target === dlg) close();
+    });
+  }
+
+  // src/web/main.ts
+  var $2 = (id) => {
+    const el3 = document.getElementById(id);
+    if (!el3) throw new Error(`#${id} \u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093`);
+    return el3;
   };
   var state = createCallState();
   var dialog = new DialogEngine(state);
@@ -2385,7 +2631,9 @@
   var mic = new MicInput();
   var mode = "appointment";
   var callStarted = false;
-  function el(tag, cls, text) {
+  var callStartedAt = 0;
+  var callLog = [];
+  function el2(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
     if (text !== void 0) node.textContent = text;
@@ -2394,10 +2642,10 @@
   function renderScenario() {
     const s = DEMO_SCENARIO;
     const goal = mode === "transfer" ? "\u30B4\u30FC\u30EB: \u53D7\u4ED8\u3092\u7A81\u7834\u3057\u3066\u62C5\u5F53\u8005\u306B\u53D6\u6B21\u3044\u3067\u3082\u3089\u3044\u3001\u4EBA\u9593\u306E\u30AA\u30DA\u30EC\u30FC\u30BF\u30FC\u3078\u5F15\u304D\u7D99\u3050" : `\u30B4\u30FC\u30EB: ${s.proposedDate} ${s.proposedTime} \u306E\u30AA\u30F3\u30E9\u30A4\u30F3\u5546\u8AC7\uFF08${s.meetingMinutes}\u5206\uFF09\u78BA\u5B9A\uFF0B\u30D2\u30A2\u30EA\u30F3\u30B07\u9805\u76EE\u53D6\u5F97`;
-    $("scenario").textContent = `\u67B6\u96FB\u5148: ${s.companyName}\uFF08\u5F93\u696D\u54E1${s.employeeCount}\u540D\u30FB\u5F79\u54E1${s.officerCount}\u540D\uFF09 \uFF0F \u76F8\u624B: ${s.contactTitle} ${s.contactName}\u69D8 \uFF0F ${goal}`;
+    $2("scenario").textContent = `\u67B6\u96FB\u5148: ${s.companyName}\uFF08\u5F93\u696D\u54E1${s.employeeCount}\u540D\u30FB\u5F79\u54E1${s.officerCount}\u540D\uFF09 \uFF0F \u76F8\u624B: ${s.contactTitle} ${s.contactName}\u69D8 \uFF0F ${goal}`;
   }
   function renderSteps() {
-    const list = $("steps");
+    const list = $2("steps");
     list.innerHTML = "";
     const currentIdx = PHASE_ORDER.indexOf(state.phase);
     for (const id of PHASE_ORDER) {
@@ -2405,22 +2653,22 @@
       const idx = PHASE_ORDER.indexOf(id);
       const done = state.ended || currentIdx >= 0 && idx < currentIdx;
       const now = id === state.phase;
-      const li = el("li", now ? "now" : done ? "done" : "");
-      li.append(el("span", "id", p.id), el("span", "", p.label));
+      const li = el2("li", now ? "now" : done ? "done" : "");
+      li.append(el2("span", "id", p.id), el2("span", "", p.label));
       list.append(li);
     }
   }
   function renderHearing() {
-    const list = $("hearing");
+    const list = $2("hearing");
     list.innerHTML = "";
     for (const s of HEARING_SLOTS) {
       const v = state.hearing[s.id];
-      const li = el("li", v ? "ok" : "ng");
-      li.append(el("span", "mark", v ? "\u25CB" : "\xD7"));
-      const body = el("span");
+      const li = el2("li", v ? "ok" : "ng");
+      li.append(el2("span", "mark", v ? "\u25CB" : "\xD7"));
+      const body = el2("span");
       body.append(document.createTextNode(`${s.id} ${s.label}`));
-      if (s.critical) body.append(el("span", "crit", " \u26A0\u5FC5\u9808"));
-      body.append(el("span", "detail", v ?? "\u672A\u53D6\u5F97"));
+      if (s.critical) body.append(el2("span", "crit", " \u26A0\u5FC5\u9808"));
+      body.append(el2("span", "detail", v ?? "\u672A\u53D6\u5F97"));
       li.append(body);
       list.append(li);
     }
@@ -2430,51 +2678,51 @@
       ["\u524D\u65E5\u9023\u7D61\u306E\u5E0C\u671B\u6642\u9593\u5E2F", state.callbackWindow]
     ];
     for (const [label, v] of extras) {
-      const li = el("li", v ? "ok" : "ng");
-      li.append(el("span", "mark", v ? "\u25CB" : "\xD7"));
-      const body = el("span");
-      body.append(document.createTextNode(label), el("span", "detail", v ?? "\u672A\u53D6\u5F97"));
+      const li = el2("li", v ? "ok" : "ng");
+      li.append(el2("span", "mark", v ? "\u25CB" : "\xD7"));
+      const body = el2("span");
+      body.append(document.createTextNode(label), el2("span", "detail", v ?? "\u672A\u53D6\u5F97"));
       li.append(body);
       list.append(li);
     }
   }
   function renderDod() {
     const dod = evaluateDod(state);
-    const list = $("dod");
+    const list = $2("dod");
     list.innerHTML = "";
     for (const i of dod.items) {
-      const li = el("li", i.ok ? "ok" : "ng");
-      li.append(el("span", "mark", i.ok ? "\u25CB" : "\xD7"));
-      const body = el("span");
-      body.append(document.createTextNode(i.label), el("span", "detail", i.detail));
+      const li = el2("li", i.ok ? "ok" : "ng");
+      li.append(el2("span", "mark", i.ok ? "\u25CB" : "\xD7"));
+      const body = el2("span");
+      body.append(document.createTextNode(i.label), el2("span", "detail", i.detail));
       li.append(body);
       list.append(li);
     }
-    const v = $("verdict");
+    const v = $2("verdict");
     v.className = `verdict ${dod.passed ? "pass" : "fail"}`;
     v.textContent = dod.passed ? "\u2705 \u30A2\u30DD\u6210\u7ACB\uFF08\u5168\u9805\u76EE\u25CB\uFF09" : "\u672A\u6210\u7ACB\uFF08\u672A\u5145\u8DB3\u3042\u308A\uFF09";
-    const tbody = $("baseline");
+    const tbody = $2("baseline");
     tbody.innerHTML = "";
     for (const b of dod.humanBaseline) {
-      const tr = el("tr");
-      tr.append(el("td", "", b.label));
-      tr.append(el("td", "n hu", `${Math.round(b.human * 100)}%`));
-      tr.append(el("td", "n ai", b.ai === 1 ? "100%" : "\u2014"));
+      const tr = el2("tr");
+      tr.append(el2("td", "", b.label));
+      tr.append(el2("td", "n hu", `${Math.round(b.human * 100)}%`));
+      tr.append(el2("td", "n ai", b.ai === 1 ? "100%" : "\u2014"));
       tbody.append(tr);
     }
   }
   function renderGuardrails() {
-    const box = $("guardrails");
+    const box = $2("guardrails");
     box.innerHTML = "";
     if (state.firedGuardrails.length === 0) {
-      box.append(el("div", "note", "\u767A\u706B\u306A\u3057"));
+      box.append(el2("div", "note", "\u767A\u706B\u306A\u3057"));
     } else {
       for (const id of state.firedGuardrails) {
-        const tag = el("span", "tag", `${id} ${GUARDRAILS[id].trigger}`);
+        const tag = el2("span", "tag", `${id} ${GUARDRAILS[id].trigger}`);
         box.append(tag);
       }
     }
-    $("compliance").textContent = `\u76F8\u624B\u306B\u5C4A\u3044\u305F\u7981\u6B62\u8868\u73FE: 0 \u4EF6\uFF08\u51FA\u529B\u524D\u30D5\u30A3\u30EB\u30BF\u3067\u767A\u8A71\u524D\u306B\u906E\u65AD ${state.blockedViolationCount} \u4EF6\uFF09\u3002\u767A\u8A71\u306F\u53CE\u9332\u6E08\u307F\u306E\u53F0\u672C\u3067\u3001\u751F\u6210\u524D\u5236\u7D04\u304C\u52B9\u3044\u3066\u3044\u308B\u72B6\u614B\u3067\u3059\u3002`;
+    $2("compliance").textContent = `\u76F8\u624B\u306B\u5C4A\u3044\u305F\u7981\u6B62\u8868\u73FE: 0 \u4EF6\uFF08\u51FA\u529B\u524D\u30D5\u30A3\u30EB\u30BF\u3067\u767A\u8A71\u524D\u306B\u906E\u65AD ${state.blockedViolationCount} \u4EF6\uFF09\u3002\u767A\u8A71\u306F\u53CE\u9332\u6E08\u307F\u306E\u53F0\u672C\u3067\u3001\u751F\u6210\u524D\u5236\u7D04\u304C\u52B9\u3044\u3066\u3044\u308B\u72B6\u614B\u3067\u3059\u3002`;
   }
   function renderAll() {
     renderSteps();
@@ -2485,7 +2733,7 @@
     syncButtons();
   }
   function renderTransfer() {
-    const list = $("transferStatus");
+    const list = $2("transferStatus");
     list.innerHTML = "";
     const outcome = transfer.result;
     const rows = [
@@ -2501,32 +2749,32 @@
       ]
     ];
     for (const [label, ok, detail] of rows) {
-      const li = el("li", ok ? "ok" : "ng");
-      li.append(el("span", "mark", ok ? "\u25CB" : "\u2014"));
-      const body = el("span");
-      body.append(document.createTextNode(label), el("span", "detail", detail));
+      const li = el2("li", ok ? "ok" : "ng");
+      li.append(el2("span", "mark", ok ? "\u25CB" : "\u2014"));
+      const body = el2("span");
+      body.append(document.createTextNode(label), el2("span", "detail", detail));
       li.append(body);
       list.append(li);
     }
   }
-  var transcript = () => $("transcript");
+  var transcript = () => $2("transcript");
   function clearTranscript() {
     transcript().innerHTML = '<div class="empty">\u300C\u901A\u8A71\u958B\u59CB\u300D\u3067\u67B6\u96FB\u3092\u59CB\u3081\u307E\u3059</div>';
   }
   function pushPhaseSeparator(phase) {
     const p = PHASES[phase];
-    const sep = el("div", "phase-sep");
-    sep.append(el("b", "", `${p.id} ${p.label}`), el("span", "", p.goal));
+    const sep = el2("div", "phase-sep");
+    sep.append(el2("b", "", `${p.id} ${p.label}`), el2("span", "", p.goal));
     transcript().append(sep);
   }
   function pushMessage(kind, who, text) {
-    const row = el("div", `msg ${kind}`);
-    row.append(el("div", "who", who), el("div", "bubble", text));
+    const row = el2("div", `msg ${kind}`);
+    row.append(el2("div", "who", who), el2("div", "bubble", text));
     transcript().append(row);
     return row;
   }
   function pushFlag(text) {
-    const d = el("div", "flag", text);
+    const d = el2("div", "flag", text);
     transcript().append(d);
   }
   var follow = true;
@@ -2536,7 +2784,7 @@
   }
   function setFollow(on) {
     follow = on;
-    $("follow").hidden = on;
+    $2("follow").hidden = on;
   }
   function scrollToActive(node) {
     if (!follow) return;
@@ -2554,10 +2802,10 @@
   window.addEventListener("scroll", () => {
     if (!follow && nearBottom()) setFollow(true);
   }, { passive: true });
-  var voiceOn = () => $("voice").checked;
+  var voiceOn = () => $2("voice").checked;
   var voices = [];
   async function initVoices() {
-    const sel = $("voicesel");
+    const sel = $2("voicesel");
     if (!("speechSynthesis" in window)) {
       sel.disabled = true;
       sel.innerHTML = "<option>\u97F3\u58F0\u975E\u5BFE\u5FDC\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u3059</option>";
@@ -2578,7 +2826,7 @@
     });
     sel.value = "0";
   }
-  var selectedVoice = () => voices[Number($("voicesel").value || 0)] ?? null;
+  var selectedVoice = () => voices[Number($2("voicesel").value || 0)] ?? null;
   function speak(text) {
     if (!voiceOn()) return Promise.resolve();
     return speakUtterance(text, { voice: selectedVoice(), rate: 1, gapMs: 240 });
@@ -2596,7 +2844,7 @@
   var pause = (ms) => new Promise((r) => window.setTimeout(r, ms));
   var lastPhase = null;
   function setMicNote(text, isError = false) {
-    const n = $("micnote");
+    const n = $2("micnote");
     n.textContent = text;
     n.className = `micnote${isError ? " err" : ""}`;
   }
@@ -2621,11 +2869,15 @@
     if (busy || state.ended) return;
     busy = true;
     syncButtons();
+    const call = state;
+    const log = callLog;
+    const startedAt = callStartedAt;
     try {
       if (transcript().querySelector(".empty")) transcript().innerHTML = "";
       const guardrails = detectGuardrails(text);
       dialog.pushCustomer(text, guardrails);
       const custNode = pushMessage("cust", "\u76F8\u624B", text);
+      logLine("\u76F8\u624B", text);
       if (guardrails.length > 0) {
         pushFlag(
           `\u30AC\u30FC\u30C9\u30EC\u30FC\u30EB\u691C\u77E5: ${guardrails.map((g) => `${g}\uFF08${GUARDRAILS[g].trigger}\uFF09`).join(" / ")}`
@@ -2645,8 +2897,9 @@
         lastPhase = r.phase;
       }
       const node = pushMessage("ai", "AI", r.utterance);
+      logLine("AI", r.utterance);
       const source = describeSource(r.segments);
-      const why = el("div", "flag", `\u5224\u5B9A: ${r.matched} \uFF0F \u97F3\u6E90: ${source}`);
+      const why = el2("div", "flag", `\u5224\u5B9A: ${r.matched} \uFF0F \u97F3\u6E90: ${source}`);
       transcript().append(why);
       node.classList.add("speaking");
       renderAll();
@@ -2654,6 +2907,12 @@
       await speakReply(r.segments);
       node.classList.remove("speaking");
       renderAll();
+      if (call.ended) {
+        saveCall(
+          call,
+          buildAppointmentRecord(call, { log, startedAt, endedAt: Date.now(), company: DEMO_SCENARIO.companyName })
+        );
+      }
     } finally {
       busy = false;
       syncButtons();
@@ -2663,9 +2922,26 @@
     if (busy || transfer.finished) return;
     busy = true;
     syncButtons();
+    const call = transfer;
+    const log = callLog;
+    const startedAt = callStartedAt;
+    const saveIfFinished = () => {
+      const outcome = call.result;
+      if (outcome === "calling") return;
+      saveCall(
+        call,
+        buildTransferRecord(outcome, call.absenceRecord, {
+          log,
+          startedAt,
+          endedAt: Date.now(),
+          company: DEMO_SCENARIO.companyName
+        })
+      );
+    };
     try {
       if (transcript().querySelector(".empty")) transcript().innerHTML = "";
       const custNode = pushMessage("cust", "\u76F8\u624B", text);
+      logLine("\u76F8\u624B", text);
       scrollToActive(custNode);
       const r = transfer.respond(text);
       if (r.guardrails.length > 0) {
@@ -2680,25 +2956,29 @@
         stopVoice();
         mic.abort();
         pushFlag(`\u5224\u5B9A: ${r.matched}`);
+        logLine("\u30B7\u30B9\u30C6\u30E0", "\u62C5\u5F53\u8005\u63A5\u7D9A\u3092\u691C\u77E5 \u2192 \u30AA\u30DA\u30EC\u30FC\u30BF\u30FC\u3078\u5F15\u304D\u7D99\u304E\uFF08AI \u306F\u767A\u8A71\u3092\u505C\u6B62\uFF09");
         showHandover(true);
         renderAll();
+        saveIfFinished();
         return;
       }
       pushFlag(`\u5224\u5B9A: ${r.matched}`);
       const node = pushMessage("ai", "AI", r.utterance);
+      logLine("AI", r.utterance);
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
       await speakReply(r.segments);
       node.classList.remove("speaking");
       renderAll();
+      saveIfFinished();
     } finally {
       busy = false;
       syncButtons();
     }
   }
   function toggleMic() {
-    const btn = $("mic");
+    const btn = $2("mic");
     if (mic.listening) {
       mic.stop();
       return;
@@ -2727,16 +3007,16 @@
   }
   function applyPanels() {
     const transferMode = mode === "transfer";
-    $("transferPanel").hidden = !transferMode;
+    $2("transferPanel").hidden = !transferMode;
     for (const id of ["stepsPanel", "hearingPanel", "dodPanel", "baselinePanel"]) {
-      $(id).hidden = transferMode;
+      $2(id).hidden = transferMode;
     }
-    $("modeA").classList.toggle("on", !transferMode);
-    $("modeB").classList.toggle("on", transferMode);
+    $2("modeA").classList.toggle("on", !transferMode);
+    $2("modeB").classList.toggle("on", transferMode);
   }
   function showHandover(on) {
-    $("handover").hidden = !on;
-    if (on) $("handover").scrollIntoView({ behavior: "smooth", block: "center" });
+    $2("handover").hidden = !on;
+    if (on) $2("handover").scrollIntoView({ behavior: "smooth", block: "center" });
   }
   function setMode(next) {
     if (mode === next) return;
@@ -2757,6 +3037,8 @@
   async function startCall() {
     busy = true;
     callStarted = true;
+    callStartedAt = Date.now();
+    callLog = [];
     syncButtons();
     try {
       if (transcript().querySelector(".empty")) transcript().innerHTML = "";
@@ -2766,6 +3048,7 @@
         lastPhase = r.phase;
       }
       const node = pushMessage("ai", "AI", r.utterance);
+      logLine("AI", r.utterance);
       node.classList.add("speaking");
       renderAll();
       scrollToActive(node);
@@ -2779,7 +3062,7 @@
   }
   var busy = false;
   function syncButtons() {
-    const btn = $("mic");
+    const btn = $2("mic");
     const ended = mode === "transfer" ? transfer.finished : state.ended;
     btn.disabled = ended || busy || !micSupported();
     if (!callStarted) btn.textContent = "\u{1F4DE} \u901A\u8A71\u958B\u59CB";
@@ -2802,25 +3085,72 @@
     applySetup();
     window.scrollTo({ top: 0 });
   }
+  function browserStorage() {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+  var history = loadHistory(browserStorage());
+  var savedCalls = /* @__PURE__ */ new WeakSet();
+  function logLine(who, text) {
+    callLog.push({ at: Date.now(), who, text });
+  }
+  function saveCall(call, record) {
+    if (savedCalls.has(call)) return;
+    savedCalls.add(call);
+    history = addRecord(history, record);
+    const saved = saveHistory(browserStorage(), history);
+    renderHistory(history, openDetail);
+    setMicNote(
+      saved ? `\u901A\u8A71\u3092\u7D42\u4E86\u3057\u3001\u67B6\u96FB\u5C65\u6B74\u306B\u4FDD\u5B58\u3057\u307E\u3057\u305F\uFF08${STATUS_LABEL[record.status]}\uFF09\u3002\u300C\u30EA\u30BB\u30C3\u30C8\u300D\u3067\u6B21\u306E\u67B6\u96FB\u3092\u59CB\u3081\u3089\u308C\u307E\u3059\u3002` : "\u901A\u8A71\u3092\u7D42\u4E86\u3057\u307E\u3057\u305F\u3002\u3053\u306E\u30D6\u30E9\u30A6\u30B6\u3067\u306F\u4FDD\u5B58\u304C\u4F7F\u3048\u306A\u3044\u305F\u3081\u3001\u5C65\u6B74\u306F\u30DA\u30FC\u30B8\u3092\u9589\u3058\u308B\u3068\u6D88\u3048\u307E\u3059\u3002",
+      !saved
+    );
+  }
+  function setView(view) {
+    const isHistory = view === "history";
+    $2("callView").hidden = isHistory;
+    $2("historyView").hidden = !isHistory;
+    document.body.classList.toggle("view-history", isHistory);
+    for (const [id, on] of [["tabCall", !isHistory], ["tabHistory", isHistory]]) {
+      $2(id).classList.toggle("on", on);
+      $2(id).setAttribute("aria-selected", String(on));
+    }
+    $2("follow").hidden = isHistory || follow;
+    if (isHistory) renderHistory(history, openDetail);
+    window.scrollTo({ top: 0 });
+  }
   renderScenario();
   renderAll();
-  $("mic").addEventListener("click", () => {
+  renderHistory(history, openDetail);
+  initDetail();
+  $2("tabCall").addEventListener("click", () => setView("call"));
+  $2("tabHistory").addEventListener("click", () => setView("history"));
+  $2("historyClear").addEventListener("click", () => {
+    if (history.length === 0) return;
+    if (!window.confirm(`\u67B6\u96FB\u5C65\u6B74 ${history.length} \u4EF6\u3092\u3059\u3079\u3066\u524A\u9664\u3057\u307E\u3059\u3002\u3088\u308D\u3057\u3044\u3067\u3059\u304B\uFF1F`)) return;
+    history = [];
+    saveHistory(browserStorage(), history);
+    renderHistory(history, openDetail);
+  });
+  $2("mic").addEventListener("click", () => {
     if (!callStarted) {
       void startCall();
       return;
     }
     toggleMic();
   });
-  $("reset").addEventListener("click", reset);
-  $("follow").addEventListener("click", () => {
+  $2("reset").addEventListener("click", reset);
+  $2("follow").addEventListener("click", () => {
     setFollow(true);
     transcript().lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
   });
-  $("voice").addEventListener("change", () => {
+  $2("voice").addEventListener("change", () => {
     if (!voiceOn()) stopVoice();
   });
-  $("modeA").addEventListener("click", () => setMode("appointment"));
-  $("modeB").addEventListener("click", () => setMode("transfer"));
+  $2("modeA").addEventListener("click", () => setMode("appointment"));
+  $2("modeB").addEventListener("click", () => setMode("transfer"));
   applySetup();
   void initVoices();
 })();

@@ -1401,7 +1401,10 @@ export class DialogEngine {
     // 同じ通話で2回目に言う台本も録音で流す。
     // 同じ文言を続けて流さない制御は分岐側（言い直し・要点だけの聞き直し）で行っている。
     // ここで録音を外すと、同じ文言が合成音声で読まれて声だけが変わってしまう。
-    return this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
+    const reply = this.emit([clip(VOICE_LINES[id])], proposed, fired, matched);
+    // 締め（P9）も「失礼いたします」まで言い切る台本なので、P0X と同じく終話扱いにする
+    if (id === "closing") this.state.ended = true;
+    return reply;
   }
 
   /**
