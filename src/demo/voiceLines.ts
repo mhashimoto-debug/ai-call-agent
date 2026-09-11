@@ -288,10 +288,7 @@ export type PhraseId = keyof typeof PHRASES;
  * 収録したら public/audio/ に置き、ここから外す。
  * 置いたのに外し忘れていると npm test が落ちて知らせる（逆も同じ）。
  */
-export const UNRECORDED: ReadonlySet<string> = new Set<string>([
-  // 取次ぎ後の名乗り直し（PHRASES.handoffReintro）。収録するまでは音声合成で読む
-  "p1_handoff_reintro.mp3",
-]);
+export const UNRECORDED: ReadonlySet<string> = new Set<string>([]);
 
 /** 収録済みの発話を1区間にする。未収録なら録音を付けない（音声合成で読む）。 */
 export function clip(line: VoiceLine): SpeechSegment {

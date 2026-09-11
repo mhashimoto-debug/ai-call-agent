@@ -1175,10 +1175,7 @@
     recapDocument: { file: "recap_r4_document.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u9001\u4ED8\u5148\u306E\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u4F3A\u3048\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" },
     recapAbsent: { file: "recap_r7_absent.mp3", text: "\u6050\u308C\u5165\u308A\u307E\u3059\u3001\u4F55\u6642\u9803\u3067\u3057\u305F\u3089\u304A\u623B\u308A\u306B\u306A\u308A\u307E\u3059\u3067\u3057\u3087\u3046\u304B\uFF1F" }
   };
-  var UNRECORDED = /* @__PURE__ */ new Set([
-    // 取次ぎ後の名乗り直し（PHRASES.handoffReintro）。収録するまでは音声合成で読む
-    "p1_handoff_reintro.mp3"
-  ]);
+  var UNRECORDED = /* @__PURE__ */ new Set([]);
   function clip(line) {
     return UNRECORDED.has(line.file) ? { text: line.text } : { text: line.text, audioFile: audioUrl(line.file) };
   }
