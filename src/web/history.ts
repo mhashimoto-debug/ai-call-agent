@@ -5,7 +5,7 @@
  * 保存先はこのブラウザだけで、サーバーには送らない。
  * DOM には触れない（表示は historyView.ts）。node のテストから直接呼べるようにするため。
  */
-import { evaluateDod } from "../domain/dod.js";
+import { emailStatus, evaluateDod } from "../domain/dod.js";
 import { HEARING_SLOTS } from "../domain/hearing.js";
 import type { CallState } from "../domain/state.js";
 import type { AbsenceRecord, AgentMode, TransferOutcome } from "../demo/transferEngine.js";
@@ -81,7 +81,7 @@ export function buildAppointmentRecord(state: CallState, meta: CallMeta): CallRe
     },
     {
       label: "メールアドレス",
-      value: state.email ? `${state.email}${state.emailConfirmed ? "（復唱確認済み）" : "（復唱未確認）"}` : null,
+      value: state.email ? `${state.email}${emailStatus(state)}` : null,
     },
     { label: "前日確認の連絡先（直通番号）", value: state.callbackPhone },
     { label: "前日連絡の希望時間帯", value: state.callbackWindow },

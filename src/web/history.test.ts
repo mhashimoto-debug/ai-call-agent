@@ -58,7 +58,6 @@ const APPOINTMENT_TURNS = [
   "いえ、特にやっていません",
   "特にないです",
   "はい、私が決めます",
-  "はい、合っています",
   "午前中なら繋がります",
   "はい、入れておきます",
 ];
@@ -99,7 +98,8 @@ test("タイプA 完走: 締めで通話終了になり、アポ獲得として 
 
   const value = (label: string): string | null | undefined => r.data.find((d) => d.label === label)?.value;
   assert.equal(value("H7 決算月"), "3月");
-  assert.equal(value("メールアドレス"), "nakamura@example.co.jp（復唱確認済み）");
+  // 録音だけで通話するため復唱はせず、取得したアドレスを送付先として確定して保存する
+  assert.equal(value("メールアドレス"), "nakamura@example.co.jp（復唱なしで確定）");
   assert.equal(value("前日確認の連絡先（直通番号）"), "090-1234-5678");
   assert.ok(value("商談日時"));
   assert.ok(r.data.every((d) => d.value), "7項目と連絡先がすべて取得済み");

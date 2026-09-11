@@ -16,6 +16,7 @@ import type { GuardrailId } from "../domain/types.js";
 import { applyExtracted, createCallState } from "../domain/state.js";
 import { evaluateDod } from "../domain/dod.js";
 import { autoFix, checkForbidden } from "../domain/forbidden.js";
+import { buildAppointmentRecord } from "../web/history.js";
 
 function fresh() {
   const state = createCallState();
@@ -446,24 +447,16 @@ test("P8 前置き: 前置きは1回しか挟まない", () => {
 
 // ---------- P8: 日本語混じりのメールアドレス指定 ----------
 
-/** 復唱の区間（前置き・アドレス・確認）。 */
-const confirmParts = (address: string): string[] => [
-  PHRASES.emailConfirmPre.text,
-  `${address} `,
-  PHRASES.emailConfirmPost.text,
-];
-
 test("P8で『会社名の後に@gmail.comです』と回答した際にメアド取得成功となりP9へ進む", () => {
   const { state, dialog } = atEmailSlot();
   const r = dialog.respond("会社名の後に@gmail.comです");
   assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
   assert.equal(state.email, "会社名@gmail.com");
-  // ユーザー名は説明のまま残し、復唱で確認してもらう
-  assert.deepEqual(segTexts(r), confirmParts("会社名@gmail.com"));
+  // 復唱はせず（アドレスの読み上げは音声合成になる）、そのまま残りの確認へ進む
+  assert.equal(r.utterance, PHRASES.askCallbackWindow.text);
+  assert.equal(state.emailConfirmed, true);
   assert.equal(r.phase, "P8");
 
-  assert.equal(dialog.respond("はい、それで合っています").utterance, PHRASES.askCallbackWindow.text);
-  assert.equal(state.emailConfirmed, true);
   assert.match(dialog.respond("午前中なら繋がります").utterance, /カレンダー/);
   const closing = dialog.respond("はい、入れておきます");
   assert.equal(closing.utterance, VOICE_LINES.closing.text);
@@ -482,12 +475,12 @@ const SPOKEN_EMAILS: [string, string][] = [
 ];
 
 for (const [text, expected] of SPOKEN_EMAILS) {
-  test(`P8 メール: 「${text}」をアドレスとして受け取り、聞き直さずに復唱へ進む`, () => {
+  test(`P8 メール: 「${text}」をアドレスとして受け取り、聞き直さずに次の確認へ進む`, () => {
     const { state, dialog } = atEmailSlot();
     const r = dialog.respond(text);
     assert.doesNotMatch(r.matched, /聞き取れず/, `聞き取れずの再質問に落ちている: ${r.matched}`);
     assert.equal(state.email, expected);
-    assert.deepEqual(segTexts(r), confirmParts(expected));
+    assert.equal(r.utterance, PHRASES.askCallbackWindow.text);
   });
 }
 
@@ -499,23 +492,12 @@ test("P8 メール: 英字でユーザー名が取れたものは完全なアド
   }
 });
 
-test("P8 メール: 復唱したアドレスを言い直されたら、新しいアドレスで復唱し直す", () => {
-  const { state, dialog } = atEmailSlot();
-  dialog.respond("会社名の後に@gmail.comです"); // → 復唱
-  const again = dialog.respond("いえ、sample-kogyo@gmail.com です");
-  assert.equal(state.email, "sample-kogyo@gmail.com");
-  assert.deepEqual(segTexts(again), confirmParts("sample-kogyo@gmail.com"));
-  assert.equal(state.emailConfirmed, false);
-  dialog.respond("はい、合っています");
-  assert.equal(state.emailConfirmed, true);
-});
-
 test("P8 メール: 「〜ドットネットでお願いします」はアドレスとして受け取り、HP参照と取り違えない", () => {
   const { state, dialog } = atEmailSlot();
   const r = dialog.respond("nakamura アット nifty ドット ネットでお願いします");
   assert.notEqual(r.utterance, PHRASES.hpReference.text, "HP参照として扱っている");
   assert.equal(state.email, "nakamura@nifty.net");
-  assert.deepEqual(segTexts(r), confirmParts("nakamura@nifty.net"));
+  assert.equal(r.utterance, PHRASES.askCallbackWindow.text);
 });
 
 // ---------- P5: 決算月・メールアドレスのうち、聞けていない方だけを尋ねる ----------
@@ -573,6 +555,38 @@ test("P3で決算月もメールアドレスも答えていれば、P5を飛ば�
 test("P3で何も先に答えていなければ、これまでどおり決算月と送付先メールアドレスを両方尋ねる", () => {
   const { dialog } = atHeadcount();
   assert.equal(dialog.respond("20人くらいです").utterance, VOICE_LINES.hearingFiscalEmail.text);
+});
+
+// ---------- P8: メールアドレス取得後は復唱せずに締めへ ----------
+
+test("P8でメアド取得後、復唱なしで終話音源が再生されアポ成立すること", () => {
+  const { state, dialog } = fresh();
+  state.phase = "P7";
+  applyExtracted(state, { ...ALL_HEARING, callback_window: "午前中" });
+  dialog.respond("はい、その時間で大丈夫です"); // → 連絡先の確認
+  assert.equal(dialog.respond("090-1234-5678 です").utterance, PHRASES.askEmail.text);
+
+  // メールアドレスを取得したら、復唱を挟まずに締めへ進む（カレンダー登録の依頼 → 終話）
+  const afterEmail = dialog.respond("nakamura@example.co.jp です");
+  assert.doesNotMatch(afterEmail.utterance, /復唱|でお間違いないでしょうか/, "メールアドレスを復唱している");
+  assert.equal(afterEmail.utterance, PHRASES.calendarRequest.text);
+  const closing = dialog.respond("はい、入れておきます");
+  assert.equal(closing.utterance, VOICE_LINES.closing.text);
+  assert.deepEqual(audioFiles(closing.segments), [`${AUDIO_BASE}p9_closing.mp3`]);
+  assert.equal(closing.phase, "P9");
+  assertFullyRecorded(afterEmail, "カレンダー登録の依頼");
+  assertFullyRecorded(closing, "終話");
+
+  // アポ成立の判定と、架電履歴に保存する記録は維持する
+  assert.equal(state.email, "nakamura@example.co.jp");
+  const dod = evaluateDod(state);
+  assert.ok(dod.passed, `DoD 未達: ${dod.items.filter((i) => !i.ok).map((i) => i.label).join(", ")}`);
+  const record = buildAppointmentRecord(state, { log: [], startedAt: 0, endedAt: 1, company: "株式会社サンプル工業" });
+  assert.equal(record.status, "appointment");
+  assert.equal(
+    record.data.find((d) => d.label === "メールアドレス")?.value,
+    "nakamura@example.co.jp（復唱なしで確定）",
+  );
 });
 
 // ---------- 想定外発話のフォールバック ----------
@@ -1026,7 +1040,7 @@ test("「この番号でいいです」への返事とメールアドレスの�
   assert.deepEqual(texts(r), [PHRASES.currentNumberAck.text, PHRASES.currentNumberEmail.text]);
 });
 
-test("メールアドレスの復唱は、アドレスだけを差し込み区間にして前後を固定文で挟む", () => {
+test("メールアドレスを取得しても復唱せず、アドレスを音声合成で読み上げない", () => {
   const { state, dialog } = fresh();
   applyExtracted(state, {
     H1: "なし",
@@ -1041,13 +1055,12 @@ test("メールアドレスの復唱は、アドレスだけを差し込み区�
   state.phase = "P7";
   dialog.respond("はい、その時間で大丈夫です");
   const r = dialog.respond("090-1234-5678 です");
-  assert.deepEqual(texts(r), [
-    PHRASES.emailConfirmPre.text,
-    "nakamura@sample-kogyo.co.jp ",
-    PHRASES.emailConfirmPost.text,
-  ]);
-  assert.equal(r.segments[1]?.audioFile, undefined, "差し込みのアドレスは音声合成で読む");
-  assert.equal(r.utterance, "復唱させていただきます。nakamura@sample-kogyo.co.jp でお間違いないでしょうか？");
+  assert.doesNotMatch(r.utterance, /復唱|nakamura@/, "メールアドレスを読み上げて復唱している");
+  assert.equal(r.utterance, PHRASES.askCallbackWindow.text);
+  for (const s of r.segments) assert.ok(s.audioFile, `「${s.text}」が音声合成で読まれる`);
+  // 復唱なしで送付先として確定し、そのことを記録に残す
+  assert.equal(state.emailConfirmed, true);
+  assert.equal(state.emailReadBackSkipped, true);
 });
 
 test("不在時の戻り時間は差し込み区間にし、前後の固定文と分ける", () => {

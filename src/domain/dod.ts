@@ -21,6 +21,15 @@ export interface DodResult {
   humanBaseline: { label: string; human: number; ai: number }[];
 }
 
+/**
+ * メールアドレスの確定のしかた（表示用）。
+ * 復唱して確認したものと、録音だけで通話するため復唱せずに確定したものを区別して見せる。
+ */
+export function emailStatus(state: CallState): string {
+  if (!state.emailConfirmed) return "（復唱未実施）";
+  return state.emailReadBackSkipped ? "（復唱なしで確定）" : "（復唱確認済み）";
+}
+
 export function evaluateDod(state: CallState): DodResult {
   const filledHearing = HEARING_SLOTS.filter((s) => state.hearing[s.id]);
   const hearingCoverage = filledHearing.length / HEARING_SLOTS.length;
@@ -54,10 +63,10 @@ export function evaluateDod(state: CallState): DodResult {
     },
     {
       key: "email",
-      label: "メールアドレス取得＋復唱確認済み",
+      label: "メールアドレス取得＋送付先の確定",
       ok: Boolean(state.email) && state.emailConfirmed,
       detail: state.email
-        ? `${state.email}${state.emailConfirmed ? "（復唱確認済み）" : "（復唱未実施）"}`
+        ? `${state.email}${emailStatus(state)}`
         : "未取得",
     },
     {

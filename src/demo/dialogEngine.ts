@@ -384,7 +384,7 @@ const LOCAL_TAIL = /(?:の後ろに|のうしろに|の後に|のあとに|の�
 export interface SpokenEmail {
   /** 格納するアドレス。ユーザー名が日本語の説明（「会社名」）のときは、説明のまま @ の前に置く */
   address: string;
-  /** ユーザー名が英字で取れなかった（「会社名の後に@gmail.com」）。復唱で確認してもらう */
+  /** ユーザー名が英字で取れなかった（「会社名の後に@gmail.com」）。送付前に担当者が確認する */
   partial: boolean;
 }
 
@@ -530,13 +530,17 @@ const REASK_PREFIX: PhraseId[] = ["reask1", "reask2", "reask3"];
 const EARLY_PHASES = new Set<PhaseId>(["P0", "P1"]);
 
 /** P8 で今どのスロットを聞いているか。 */
-type PendingSlot = HearingId | "email" | "emailConfirm" | "callbackPhone" | "callbackWindow";
+/**
+ * P8 で聞く項目。メールアドレスの復唱（emailConfirm）は行わない。
+ * アドレスの読み上げは音声合成になり、録音だけで通話できなくなるため（取得した時点で送付先として確定する）。
+ */
+type PendingSlot = HearingId | "email" | "callbackPhone" | "callbackWindow";
 
 /** 詳細ヒアリング（H1〜H7）の項目か。 */
 const isHearingSlot = (slot: PendingSlot | null): slot is HearingId => slot !== null && /^H[1-7]$/.test(slot);
 
-/** P8 の各項目を尋ねる発話。メールアドレスの復唱だけはアドレスを差し込むので askParts で組み立てる。 */
-const SLOT_QUESTION: Record<Exclude<PendingSlot, "emailConfirm">, PhraseId> = {
+/** P8 の各項目を尋ねる発話。 */
+const SLOT_QUESTION: Record<PendingSlot, PhraseId> = {
   H1: "askH1",
   H2: "askH2",
   H3: "askH3",
@@ -1149,19 +1153,8 @@ export class DialogEngine {
       notes.push(`まとめ聞きで ${this.harvested.join("・")} を同時取得`);
     }
     const spokenEmail = extractEmail(text);
-
-    // 復唱したアドレスを言い直された（「いえ、sample@gmail.com です」）ら、新しいアドレスで復唱し直す
-    if (this.pending === "emailConfirm" && spokenEmail && spokenEmail.address !== this.state.email) {
-      applyExtracted(this.state, { email: spokenEmail.address });
-      return this.speakPhrases(
-        this.askParts("emailConfirm"),
-        "P8",
-        fired,
-        "復唱したアドレスを訂正された → 新しいアドレスで復唱し直す",
-      );
-    }
     if (spokenEmail?.partial && this.state.email === spokenEmail.address) {
-      notes.push(`メールアドレスをドメインで取得（${spokenEmail.address}。ユーザー名は復唱で確認）`);
+      notes.push(`メールアドレスをドメインで取得（${spokenEmail.address}。ユーザー名は送付前に要確認）`);
     }
 
     if (this.pending) {
@@ -1198,6 +1191,12 @@ export class DialogEngine {
    * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
    */
   private advanceP8(notes: string[], fired: GuardrailId[], lead?: PhraseId): DialogReply {
+    // メールアドレスは復唱しない（アドレスの読み上げは音声合成になり、録音だけで通話できなくなる）。
+    // 取得できた時点で送付先として確定し、復唱なしで確定したことを記録に残す
+    if (this.state.email && !this.state.emailConfirmed) {
+      applyExtracted(this.state, { email_confirmed: true });
+      this.state.emailReadBackSkipped = true;
+    }
     const leadParts: Part[] = lead ? [lead] : [];
     const nextSlot = this.nextSlot();
     if (!nextSlot) {
@@ -1275,14 +1274,14 @@ export class DialogEngine {
   /** P8 で連絡先（メールアドレス・前日連絡の番号）を聞いている場面か。 */
   private askingContactInP8(): boolean {
     if (this.state.phase !== "P8" || this.state.ended) return false;
-    return this.pending === "email" || this.pending === "emailConfirm" || this.pending === "callbackPhone";
+    return this.pending === "email" || this.pending === "callbackPhone";
   }
 
   /**
    * P8 で「ホームページのアドレスで」と指定されたときの処理。
    *
    * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
-   * 指定された連絡先はこちらでサイトから確認するものとして確定する（読み上げる文字列が無いので復唱も済みとする）。
+   * 指定された連絡先はこちらでサイトから確認するものとして確定する。
    *
    * この後に詳細ヒアリングへ入る場合は、承諾の一言（「承知いたしました。」）→
    * 前置き（「念のため確認させてください。」）→ 最初の質問の順に進め、唐突に質問を始めない。
@@ -1293,7 +1292,7 @@ export class DialogEngine {
     // 前日連絡の番号を聞いている場面で、アドレスは取得済みか番号の話をしているなら、番号の指定として受け取る
     const number = this.pending === "callbackPhone" && (Boolean(this.state.email) || /(番号|電話)/.test(text));
     if (number) applyExtracted(this.state, { callback_phone: HP_NUMBER_LABEL });
-    else applyExtracted(this.state, { email: HP_ADDRESS_LABEL, email_confirmed: true });
+    else applyExtracted(this.state, { email: HP_ADDRESS_LABEL });
     this.hpReferenced = true;
     this.pending = null;
     this.unknownStreak = 0;
@@ -1320,8 +1319,6 @@ export class DialogEngine {
     switch (slot) {
       case "email":
         return Boolean(this.state.email);
-      case "emailConfirm":
-        return this.state.emailConfirmed;
       case "callbackPhone":
         return Boolean(this.state.callbackPhone);
       case "callbackWindow":
@@ -1335,17 +1332,13 @@ export class DialogEngine {
     const h = missingHearing(this.state)[0];
     if (h) return h;
     if (!this.state.email) return "email";
-    if (!this.state.emailConfirmed) return "emailConfirm";
     if (!this.state.callbackPhone) return "callbackPhone";
     if (!this.state.callbackWindow) return "callbackWindow";
     return null;
   }
 
-  /** その項目を尋ねる発話。メールアドレスの復唱は、取得したアドレスだけを音声合成で差し込む。 */
+  /** その項目を尋ねる発話（すべて録音）。 */
   private askParts(slot: PendingSlot): Part[] {
-    if (slot === "emailConfirm") {
-      return ["emailConfirmPre", tts(`${this.state.email} `), "emailConfirmPost"];
-    }
     return [SLOT_QUESTION[slot]];
   }
 
@@ -1397,8 +1390,6 @@ export class DialogEngine {
         const found = extractEmail(text);
         return { facts: { email: found?.address ?? null }, ok: Boolean(found) };
       }
-      case "emailConfirm":
-        return { facts: { email_confirmed: true }, ok: YES.test(text) && !NO.test(text) };
       case "callbackPhone": {
         const m = PHONE_RE.exec(text.replace(/\s/g, ""));
         return { facts: { callback_phone: m?.[0] ?? null }, ok: Boolean(m) };

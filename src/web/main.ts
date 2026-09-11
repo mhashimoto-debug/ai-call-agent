@@ -114,7 +114,12 @@ function renderHearing(): void {
     list.append(li);
   }
   const extras: [string, string | null][] = [
-    ["メールアドレス（復唱確認）", state.email && state.emailConfirmed ? `${state.email}（復唱済）` : null],
+    [
+      "メールアドレス（送付先）",
+      state.email && state.emailConfirmed
+        ? `${state.email}${state.emailReadBackSkipped ? "（復唱なしで確定）" : "（復唱済）"}`
+        : null,
+    ],
     ["前日確認の連絡先", state.callbackPhone],
     ["前日連絡の希望時間帯", state.callbackWindow],
   ];

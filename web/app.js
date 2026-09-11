@@ -453,6 +453,7 @@
       hearing: { H1: null, H2: null, H3: null, H4: null, H5: null, H6: null, H7: null },
       email: null,
       emailConfirmed: false,
+      emailReadBackSkipped: false,
       callbackPhone: null,
       isCurrentNumber: false,
       callbackWindow: null,
@@ -527,6 +528,10 @@
   }
 
   // src/domain/dod.ts
+  function emailStatus(state2) {
+    if (!state2.emailConfirmed) return "\uFF08\u5FA9\u5531\u672A\u5B9F\u65BD\uFF09";
+    return state2.emailReadBackSkipped ? "\uFF08\u5FA9\u5531\u306A\u3057\u3067\u78BA\u5B9A\uFF09" : "\uFF08\u5FA9\u5531\u78BA\u8A8D\u6E08\u307F\uFF09";
+  }
   function evaluateDod(state2) {
     const filledHearing = HEARING_SLOTS.filter((s) => state2.hearing[s.id]);
     const hearingCoverage = filledHearing.length / HEARING_SLOTS.length;
@@ -551,9 +556,9 @@
       },
       {
         key: "email",
-        label: "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u53D6\u5F97\uFF0B\u5FA9\u5531\u78BA\u8A8D\u6E08\u307F",
+        label: "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u53D6\u5F97\uFF0B\u9001\u4ED8\u5148\u306E\u78BA\u5B9A",
         ok: Boolean(state2.email) && state2.emailConfirmed,
-        detail: state2.email ? `${state2.email}${state2.emailConfirmed ? "\uFF08\u5FA9\u5531\u78BA\u8A8D\u6E08\u307F\uFF09" : "\uFF08\u5FA9\u5531\u672A\u5B9F\u65BD\uFF09"}` : "\u672A\u53D6\u5F97"
+        detail: state2.email ? `${state2.email}${emailStatus(state2)}` : "\u672A\u53D6\u5F97"
       },
       {
         key: "callback",
@@ -1945,17 +1950,8 @@
         notes.push(`\u307E\u3068\u3081\u805E\u304D\u3067 ${this.harvested.join("\u30FB")} \u3092\u540C\u6642\u53D6\u5F97`);
       }
       const spokenEmail = extractEmail(text);
-      if (this.pending === "emailConfirm" && spokenEmail && spokenEmail.address !== this.state.email) {
-        applyExtracted(this.state, { email: spokenEmail.address });
-        return this.speakPhrases(
-          this.askParts("emailConfirm"),
-          "P8",
-          fired,
-          "\u5FA9\u5531\u3057\u305F\u30A2\u30C9\u30EC\u30B9\u3092\u8A02\u6B63\u3055\u308C\u305F \u2192 \u65B0\u3057\u3044\u30A2\u30C9\u30EC\u30B9\u3067\u5FA9\u5531\u3057\u76F4\u3059"
-        );
-      }
       if (spokenEmail?.partial && this.state.email === spokenEmail.address) {
-        notes.push(`\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u30C9\u30E1\u30A4\u30F3\u3067\u53D6\u5F97\uFF08${spokenEmail.address}\u3002\u30E6\u30FC\u30B6\u30FC\u540D\u306F\u5FA9\u5531\u3067\u78BA\u8A8D\uFF09`);
+        notes.push(`\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\u3092\u30C9\u30E1\u30A4\u30F3\u3067\u53D6\u5F97\uFF08${spokenEmail.address}\u3002\u30E6\u30FC\u30B6\u30FC\u540D\u306F\u9001\u4ED8\u524D\u306B\u8981\u78BA\u8A8D\uFF09`);
       }
       if (this.pending) {
         if (this.isFilled(this.pending)) {
@@ -1987,6 +1983,10 @@
      * 締めは録音をそのまま流す（表示テキストと音声を食い違わせないため lead は付けない）。
      */
     advanceP8(notes, fired, lead) {
+      if (this.state.email && !this.state.emailConfirmed) {
+        applyExtracted(this.state, { email_confirmed: true });
+        this.state.emailReadBackSkipped = true;
+      }
       const leadParts = lead ? [lead] : [];
       const nextSlot = this.nextSlot();
       if (!nextSlot) {
@@ -2053,13 +2053,13 @@
     /** P8 で連絡先（メールアドレス・前日連絡の番号）を聞いている場面か。 */
     askingContactInP8() {
       if (this.state.phase !== "P8" || this.state.ended) return false;
-      return this.pending === "email" || this.pending === "emailConfirm" || this.pending === "callbackPhone";
+      return this.pending === "email" || this.pending === "callbackPhone";
     }
     /**
      * P8 で「ホームページのアドレスで」と指定されたときの処理。
      *
      * アドレスの文字列が無いので抽出の失敗として扱うと、同じ質問を聞き直し続けて抜けられなくなる。
-     * 指定された連絡先はこちらでサイトから確認するものとして確定する（読み上げる文字列が無いので復唱も済みとする）。
+     * 指定された連絡先はこちらでサイトから確認するものとして確定する。
      *
      * この後に詳細ヒアリングへ入る場合は、承諾の一言（「承知いたしました。」）→
      * 前置き（「念のため確認させてください。」）→ 最初の質問の順に進め、唐突に質問を始めない。
@@ -2069,7 +2069,7 @@
     acceptHpAddress(text, fired) {
       const number = this.pending === "callbackPhone" && (Boolean(this.state.email) || /(番号|電話)/.test(text));
       if (number) applyExtracted(this.state, { callback_phone: HP_NUMBER_LABEL });
-      else applyExtracted(this.state, { email: HP_ADDRESS_LABEL, email_confirmed: true });
+      else applyExtracted(this.state, { email: HP_ADDRESS_LABEL });
       this.hpReferenced = true;
       this.pending = null;
       this.unknownStreak = 0;
@@ -2093,8 +2093,6 @@
       switch (slot) {
         case "email":
           return Boolean(this.state.email);
-        case "emailConfirm":
-          return this.state.emailConfirmed;
         case "callbackPhone":
           return Boolean(this.state.callbackPhone);
         case "callbackWindow":
@@ -2107,16 +2105,12 @@
       const h = missingHearing(this.state)[0];
       if (h) return h;
       if (!this.state.email) return "email";
-      if (!this.state.emailConfirmed) return "emailConfirm";
       if (!this.state.callbackPhone) return "callbackPhone";
       if (!this.state.callbackWindow) return "callbackWindow";
       return null;
     }
-    /** その項目を尋ねる発話。メールアドレスの復唱は、取得したアドレスだけを音声合成で差し込む。 */
+    /** その項目を尋ねる発話（すべて録音）。 */
     askParts(slot) {
-      if (slot === "emailConfirm") {
-        return ["emailConfirmPre", tts(`${this.state.email} `), "emailConfirmPost"];
-      }
       return [SLOT_QUESTION[slot]];
     }
     /** 「今どの項目を聞いているか」が分かっているので、その文脈で回答を解釈する。 */
@@ -2163,8 +2157,6 @@
           const found = extractEmail(text);
           return { facts: { email: found?.address ?? null }, ok: Boolean(found) };
         }
-        case "emailConfirm":
-          return { facts: { email_confirmed: true }, ok: YES.test(text) && !NO.test(text) };
         case "callbackPhone": {
           const m = PHONE_RE.exec(text.replace(/\s/g, ""));
           return { facts: { callback_phone: m?.[0] ?? null }, ok: Boolean(m) };
@@ -2732,7 +2724,7 @@
       },
       {
         label: "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9",
-        value: state2.email ? `${state2.email}${state2.emailConfirmed ? "\uFF08\u5FA9\u5531\u78BA\u8A8D\u6E08\u307F\uFF09" : "\uFF08\u5FA9\u5531\u672A\u78BA\u8A8D\uFF09"}` : null
+        value: state2.email ? `${state2.email}${emailStatus(state2)}` : null
       },
       { label: "\u524D\u65E5\u78BA\u8A8D\u306E\u9023\u7D61\u5148\uFF08\u76F4\u901A\u756A\u53F7\uFF09", value: state2.callbackPhone },
       { label: "\u524D\u65E5\u9023\u7D61\u306E\u5E0C\u671B\u6642\u9593\u5E2F", value: state2.callbackWindow }
@@ -3003,7 +2995,10 @@
       list.append(li);
     }
     const extras = [
-      ["\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\uFF08\u5FA9\u5531\u78BA\u8A8D\uFF09", state.email && state.emailConfirmed ? `${state.email}\uFF08\u5FA9\u5531\u6E08\uFF09` : null],
+      [
+        "\u30E1\u30FC\u30EB\u30A2\u30C9\u30EC\u30B9\uFF08\u9001\u4ED8\u5148\uFF09",
+        state.email && state.emailConfirmed ? `${state.email}${state.emailReadBackSkipped ? "\uFF08\u5FA9\u5531\u306A\u3057\u3067\u78BA\u5B9A\uFF09" : "\uFF08\u5FA9\u5531\u6E08\uFF09"}` : null
+      ],
       ["\u524D\u65E5\u78BA\u8A8D\u306E\u9023\u7D61\u5148", state.callbackPhone],
       ["\u524D\u65E5\u9023\u7D61\u306E\u5E0C\u671B\u6642\u9593\u5E2F", state.callbackWindow]
     ];

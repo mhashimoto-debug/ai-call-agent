@@ -25,6 +25,11 @@ export interface CallState {
   hearing: Record<HearingId, string | null>;
   email: string | null;
   emailConfirmed: boolean;
+  /**
+   * メールアドレスを復唱せずに送付先として確定したか。
+   * 録音だけで通話するモード（アドレスの読み上げは音声合成になるため復唱しない）で立つ。記録の表示に使う
+   */
+  emailReadBackSkipped: boolean;
   callbackPhone: string | null;
   /** 前日確認の連絡先に、今お電話している番号（発信先の番号）を使うか */
   isCurrentNumber: boolean;
@@ -51,6 +56,7 @@ export function createCallState(): CallState {
     hearing: { H1: null, H2: null, H3: null, H4: null, H5: null, H6: null, H7: null },
     email: null,
     emailConfirmed: false,
+    emailReadBackSkipped: false,
     callbackPhone: null,
     isCurrentNumber: false,
     callbackWindow: null,
